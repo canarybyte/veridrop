@@ -193,14 +193,39 @@ async def test_openai_client_strips_temperature_for_default_only_models():
     assert "temperature" not in captured["body"]
 
 
+@pytest.mark.parametrize(
+    "model,expect_stripped",
+    [
+        # Reasoning-tier models that reject temperature (HTTP 400 from OpenAI)
+        ("gpt-5.5", True),
+        ("gpt-5.5-pro", True),
+        ("gpt-5.5-2026-04-23", True),
+        ("gpt-5.4", True),
+        ("gpt-5.4-pro", True),
+        # Sub-variants of reasoning families ARE distinct (non-reasoning)
+        # models that accept temperature — must NOT be stripped
+        ("gpt-5.4-mini", False),
+        ("gpt-5.4-nano", False),
+        # Other GPT-5 lines accept temperature (5.1 with reasoning_effort=none)
+        ("gpt-5.1", False),
+        ("gpt-5.1-mini", False),
+        # Legacy / non-reasoning families — never stripped
+        ("gpt-4o", False),
+        ("gpt-4o-mini", False),
+        # Dot/hyphen/underscore canonicalization: same family bucket
+        ("gpt-5-4", True),
+        ("gpt-5_4", True),
+        ("gpt-5-4-mini", False),
+    ],
+)
 @pytest.mark.asyncio
-async def test_openai_client_keeps_temperature_for_other_models():
+async def test_openai_client_temperature_strip_per_model(model: str, expect_stripped: bool):
     captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         import json as _json
         captured["body"] = _json.loads(request.content)
-        return httpx.Response(200, json=_chat_payload(model="gpt-5.4"))
+        return httpx.Response(200, json=_chat_payload(model=model))
 
     transport = httpx.MockTransport(handler)
     client = OpenAIChatClient("https://api.openai.com", "sk-test")
@@ -211,14 +236,23 @@ async def test_openai_client_keeps_temperature_for_other_models():
     )
     try:
         await client.chat_completions_create(
-            model="gpt-5.4",
+            model=model,
             temperature=0,
             messages=[{"role": "user", "content": "hi"}],
         )
     finally:
         await client.aclose()
 
-    assert captured["body"]["temperature"] == 0
+    if expect_stripped:
+        assert "temperature" not in captured["body"], (
+            f"{model} is a reasoning-tier model that rejects temperature — "
+            "client must strip it before sending"
+        )
+    else:
+        assert captured["body"].get("temperature") == 0, (
+            f"{model} accepts temperature — client must NOT strip it "
+            "(stripping would lose detector determinism)"
+        )
 
 
 def test_openai_detectors_use_core_base_classes():

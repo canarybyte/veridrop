@@ -22,9 +22,25 @@ DEFAULT_MAX_CONCURRENT = 3
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_BACKOFF_S = 30.0
 MAX_RETRIES = 3
-DEFAULT_TEMPERATURE_ONLY_PREFIXES = (
-    "gpt-5.5",
+# Reasoning-tier model families that REJECT sampling parameters. Sending
+# temperature (even temperature=0) returns HTTP 400 "Unsupported value:
+# 'temperature' does not support 0 with this model. Only the default (1)
+# value is supported." The safe action is to strip the field entirely.
+#
+# IMPORTANT: -mini / -nano sub-variants of these families are distinct
+# (non-reasoning) models that DO accept temperature — they must NOT be
+# stripped, otherwise consistency / model_consistency detectors lose
+# determinism and start flapping.
+#
+# Sources (May 2026):
+#   - https://community.openai.com/t/temperature-in-gpt-5-models/1337133
+#   - https://github.com/mem0ai/mem0/issues/4738 (gpt-5.4-mini accepts temp)
+#   - https://github.com/BerriAI/litellm/issues/27351 (gpt-5.1 reasoning_effort=none accepts temp)
+_TEMPERATURE_REJECTING_FAMILIES = (
+    "gpt-5.5",  # 5.5 / 5.5-pro / 5.5-2026-04-23 (no -mini/-nano variant exists yet)
+    "gpt-5.4",  # 5.4 / 5.4-pro — but NOT 5.4-mini / 5.4-nano
 )
+_TEMPERATURE_OK_SUB_VARIANTS = ("-mini", "-nano")
 
 
 def normalize_openai_base_url(base_url: str) -> str:
@@ -34,9 +50,29 @@ def normalize_openai_base_url(base_url: str) -> str:
     return normalized + "/v1"
 
 
+def _normalize_openai_model_id(model_id: str) -> str:
+    """Same dot/underscore→hyphen canonicalization used by models_match in
+    config.py, so users typing `gpt-5_4` or `gpt-5-4` map to the same
+    family bucket as `gpt-5.4`."""
+    return model_id.replace(".", "-").replace("_", "-")
+
+
+def _rejects_temperature(model_id: str) -> bool:
+    normalized = _normalize_openai_model_id(model_id)
+    for family in _TEMPERATURE_REJECTING_FAMILIES:
+        nf = _normalize_openai_model_id(family)
+        if not normalized.startswith(nf):
+            continue
+        tail = normalized[len(nf):]
+        if any(tail.startswith(suf) for suf in _TEMPERATURE_OK_SUB_VARIANTS):
+            return False
+        return True
+    return False
+
+
 def _sanitize_body(body: dict[str, Any]) -> dict[str, Any]:
     model = body.get("model")
-    if isinstance(model, str) and model.startswith(DEFAULT_TEMPERATURE_ONLY_PREFIXES):
+    if isinstance(model, str) and _rejects_temperature(model):
         body.pop("temperature", None)
     return body
 
