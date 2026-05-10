@@ -591,9 +591,18 @@ def _seo_meta_for_report(report: dict) -> dict[str, str]:
     fail_count = sum(1 for r in results if isinstance(r, dict) and r.get("status") == "fail")
     total = len(results)
 
-    title = (
-        f"{domain} {proto_label} 中转站检测:{score:.0f}/100 {verdict_zh} | Veridrop"
-    )
+    # Title diversity drives long-tail SEO: each report becomes its own
+    # indexable page with a distinct query target ("X 站测 gpt-5.5 怎么样").
+    # Without the model, every report on the same domain shared one title.
+    if model:
+        title = (
+            f"{domain} {proto_label} 中转站 {model} 检测:"
+            f"{score:.0f}/100 {verdict_zh} | Veridrop"
+        )
+    else:
+        title = (
+            f"{domain} {proto_label} 中转站检测:{score:.0f}/100 {verdict_zh} | Veridrop"
+        )
     description = (
         f"对 {domain} 进行 {proto_label} 中转站检测的完整报告:"
         f"模型 {model},总分 {score:.0f}/100,判定为「{verdict_zh}」。"

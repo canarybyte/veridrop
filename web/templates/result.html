@@ -22,9 +22,12 @@
 {% endblock %}
 
 {% block content %}
-{# Breadcrumb: 首页 › 红黑榜 › {domain} › 报告 #{job_id}.
+{# Breadcrumb: 首页 › 红黑榜 › {domain} › {target_model}.
    When the report's base_url didn't yield a valid domain (legacy reports,
-   garbled URLs), drop the {domain} crumb and link straight to /leaderboard. #}
+   garbled URLs), drop the {domain} crumb and link straight to /leaderboard.
+   The trailing crumb shows the detected model so each report is uniquely
+   identifiable in nav and crawler-readable for long-tail SEO; falls back
+   to "报告 #{job_id}" when target_model is missing. #}
 <nav class="breadcrumb" aria-label="面包屑">
   <a href="/">首页</a>
   <span class="breadcrumb-sep">›</span>
@@ -34,7 +37,7 @@
     <a href="/leaderboard/{{ breadcrumb_domain }}">{{ breadcrumb_domain }}</a>
   {% endif %}
   <span class="breadcrumb-sep">›</span>
-  <span class="breadcrumb-current">报告 #{{ job_id }}</span>
+  <span class="breadcrumb-current">{% if report.target_model %}{{ report.target_model }}{% else %}报告 #{{ job_id }}{% endif %}</span>
 </nav>
 
 {% set perf = report.performance or {} %}
