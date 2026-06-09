@@ -11,6 +11,7 @@ import pytest
 
 from relay_detector.core.long_context import ANSWER_RE
 from relay_detector.core.models import ExecutionConfig, Mode
+from relay_detector.protocols.anthropic.detectors import long_context as anthropic_lc
 from relay_detector.protocols.anthropic.detectors.long_context import (
     LongContextDetector,
 )
@@ -163,3 +164,189 @@ async def test_anthropic_long_context_uses_correct_api_shape():
     assert first["temperature"] == 0
     assert first["model"] == "claude-haiku-4-5"
     assert first["messages"][0]["role"] == "user"
+
+
+def test_anthropic_1m_near_limit_initial_target_is_conservative():
+    target = anthropic_lc._initial_haystack_target(950_000, 1_000_000)
+    assert 580_000 <= target <= 590_000
+    assert anthropic_lc._initial_haystack_target(500_000, 1_000_000) == 498_500
+
+
+@pytest.mark.asyncio
+async def test_anthropic_long_context_hits_real_950k_target_in_one_count(
+    monkeypatch,
+):
+    det = LongContextDetector()
+    client = _MockClient()
+    assemble_targets: list[int] = []
+
+    def fake_assemble(target_tokens, needles, seed, protocol=None):
+        assemble_targets.append(target_tokens)
+        return "\n".join(n.sentence for n in needles)
+
+    async def count_tokens(**kwargs):
+        return ({}, {"input_tokens": 946_135}, {}, 0)
+
+    async def messages_create(**kwargs):
+        client.calls.append(kwargs)
+        prompt = kwargs["messages"][0]["content"]
+        ids = ANSWER_RE.findall(prompt.upper())
+        return ({}, _build_resp("\n".join(ids[:3]), input_tokens=946_135), {}, 0)
+
+    monkeypatch.setattr(anthropic_lc, "assemble_haystack", fake_assemble)
+    client.count_tokens = count_tokens
+    client.messages_create = messages_create
+
+    result = await det._probe_tier(
+        client, "claude-opus-4-7", 950_000, "seed", 1_000_000
+    )
+
+    assert result["status"] == "pass"
+    assert result["input_tokens_precounted"] == 946_135
+    assert result["count_tokens_attempts"] == 1
+    assert result["sizing_iterations"] == 0
+    assert len(client.calls) == 1
+    assert len(assemble_targets) == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_long_context_grows_to_real_950k_target(monkeypatch):
+    det = LongContextDetector()
+    client = _MockClient()
+    assemble_targets: list[int] = []
+    counted = [700_000, 949_000]
+    count_calls = 0
+
+    def fake_assemble(target_tokens, needles, seed, protocol=None):
+        assemble_targets.append(target_tokens)
+        return "\n".join(n.sentence for n in needles)
+
+    async def count_tokens(**kwargs):
+        nonlocal count_calls
+        count_calls += 1
+        return ({}, {"input_tokens": counted[min(count_calls - 1, 1)]}, {}, 0)
+
+    async def messages_create(**kwargs):
+        client.calls.append(kwargs)
+        prompt = kwargs["messages"][0]["content"]
+        ids = ANSWER_RE.findall(prompt.upper())
+        return ({}, _build_resp("\n".join(ids[:3]), input_tokens=949_000), {}, 0)
+
+    monkeypatch.setattr(anthropic_lc, "assemble_haystack", fake_assemble)
+    client.count_tokens = count_tokens
+    client.messages_create = messages_create
+
+    result = await det._probe_tier(
+        client, "claude-opus-4-7", 950_000, "seed", 1_000_000
+    )
+
+    assert result["status"] == "pass"
+    assert result["input_tokens_precounted"] == 949_000
+    assert result["count_tokens_attempts"] == 2
+    assert result["sizing_iterations"] == 1
+    assert len(client.calls) == 1
+    assert len(assemble_targets) == 2
+    assert 580_000 <= assemble_targets[0] <= 590_000
+    assert assemble_targets[1] > assemble_targets[0]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_long_context_recounts_after_oversized_precount(monkeypatch):
+    det = LongContextDetector()
+    client = _MockClient()
+    assemble_targets: list[int] = []
+    counted = [1_559_737, 949_000]
+    count_calls = 0
+
+    def fake_assemble(target_tokens, needles, seed, protocol=None):
+        assemble_targets.append(target_tokens)
+        return "\n".join(n.sentence for n in needles)
+
+    async def count_tokens(**kwargs):
+        nonlocal count_calls
+        count_calls += 1
+        return ({}, {"input_tokens": counted[min(count_calls - 1, 1)]}, {}, 0)
+
+    async def messages_create(**kwargs):
+        client.calls.append(kwargs)
+        prompt = kwargs["messages"][0]["content"]
+        ids = ANSWER_RE.findall(prompt.upper())
+        return ({}, _build_resp("\n".join(ids[:3]), input_tokens=949_000), {}, 0)
+
+    monkeypatch.setattr(anthropic_lc, "assemble_haystack", fake_assemble)
+    client.count_tokens = count_tokens
+    client.messages_create = messages_create
+
+    result = await det._probe_tier(
+        client, "claude-opus-4-7", 950_000, "seed", 1_000_000
+    )
+
+    assert result["status"] == "pass"
+    assert result["input_tokens_precounted"] == 949_000
+    assert result["count_tokens_attempts"] == 2
+    assert result["sizing_iterations"] == 1
+    assert len(client.calls) == 1
+    assert len(assemble_targets) == 2
+    assert assemble_targets[1] < assemble_targets[0]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_long_context_skips_near_limit_without_count_tokens(
+    monkeypatch,
+):
+    det = LongContextDetector()
+    client = _MockClient()
+
+    def fake_assemble(target_tokens, needles, seed, protocol=None):
+        return "\n".join(n.sentence for n in needles)
+
+    async def count_tokens(**kwargs):
+        raise RuntimeError("count_tokens unavailable")
+
+    async def messages_create(**kwargs):
+        raise AssertionError("near-limit prompt must not be sent without count")
+
+    monkeypatch.setattr(anthropic_lc, "assemble_haystack", fake_assemble)
+    client.count_tokens = count_tokens
+    client.messages_create = messages_create
+
+    result = await det._probe_tier(
+        client, "claude-opus-4-7", 950_000, "seed", 1_000_000
+    )
+
+    assert result["status"] == "skip"
+    assert "count_tokens" in result["skip_reason"]
+    assert result["count_tokens_attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_long_context_provider_prompt_overflow_is_skip(
+    monkeypatch,
+):
+    det = LongContextDetector()
+    client = _MockClient()
+
+    class PromptOverflow(Exception):
+        status = 400
+        body = "prompt is too long: 1559737 tokens > 1000000 maximum"
+
+    def fake_assemble(target_tokens, needles, seed, protocol=None):
+        return "\n".join(n.sentence for n in needles)
+
+    async def count_tokens(**kwargs):
+        return ({}, {"input_tokens": 949_000}, {}, 0)
+
+    async def messages_create(**kwargs):
+        raise PromptOverflow()
+
+    monkeypatch.setattr(anthropic_lc, "assemble_haystack", fake_assemble)
+    client.count_tokens = count_tokens
+    client.messages_create = messages_create
+
+    result = await det._probe_tier(
+        client, "claude-opus-4-7", 950_000, "seed", 1_000_000
+    )
+
+    assert result["status"] == "skip"
+    assert "prompt overflow" in result["skip_reason"]
+    assert "1559737 tokens > 1000000 maximum" in result["error"]

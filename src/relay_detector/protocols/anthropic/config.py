@@ -72,6 +72,16 @@ class ModelInfo:
 
 
 MODELS: dict[str, ModelInfo] = {
+    "claude-opus-4-8": ModelInfo(
+        alias="claude-opus-4-8",
+        aliases=("claude-opus-4-8",),
+        context_tokens=1_000_000,
+        max_output_tokens=128_000,
+        pdf_page_max=600,
+        supports_extended_thinking=False,
+        supports_adaptive_thinking=True,
+        new_tokenizer=True,
+    ),
     "claude-opus-4-7": ModelInfo(
         alias="claude-opus-4-7",
         aliases=("claude-opus-4-7",),

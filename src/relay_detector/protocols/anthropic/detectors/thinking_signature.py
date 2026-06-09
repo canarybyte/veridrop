@@ -46,6 +46,13 @@ MAX_TOKENS = 16000
 SIGNATURE_MIN_LEN = 50
 
 
+def _adaptive_effort_for_model(model: str) -> str:
+    normalized = model.replace(".", "-").replace("_", "-")
+    if normalized.startswith(("claude-opus-4-7", "claude-opus-4-8")):
+        return "xhigh"
+    return "high"
+
+
 class ThinkingSignatureDetector(ActiveDetector):
     name = "thinking_signature"
     display_name = "思维签名验证"
@@ -70,11 +77,10 @@ class ThinkingSignatureDetector(ActiveDetector):
             thinking = {"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS}
         elif info.supports_adaptive_thinking:
             # Opus 4.7 defaults `display` to "omitted"; explicit "summarized"
-            # gives us thinking text to inspect. Default `effort` is already
-            # "high" ("Claude almost always thinks") but we set it explicitly
-            # to be robust to default changes.
+            # gives us thinking text to inspect. Opus adaptive probes need
+            # xhigh for reliable signed-thinking emission on harder prompts.
             thinking = {"type": "adaptive", "display": "summarized"}
-            extra["output_config"] = {"effort": "high"}
+            extra["output_config"] = {"effort": _adaptive_effort_for_model(model)}
         else:
             return self.skip("model lacks thinking support")
 

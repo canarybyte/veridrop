@@ -32,10 +32,11 @@ MAX_RETRIES = 4
 
 # Per-model parameter deprecations: when the model alias starts with the key,
 # the listed body fields are stripped before sending. Anthropic occasionally
-# deprecates parameters silently in newer models — Opus 4.7 rejects requests
-# that include `temperature` with HTTP 400 "deprecated for this model".
+# deprecates parameters silently in newer models — Opus 4.7/4.8 reject
+# requests that include `temperature` with HTTP 400 "deprecated for this model".
 # Adding entries here keeps detector code model-agnostic.
 PARAM_DEPRECATIONS: dict[str, tuple[str, ...]] = {
+    "claude-opus-4-8": ("temperature",),
     "claude-opus-4-7": ("temperature",),
 }
 

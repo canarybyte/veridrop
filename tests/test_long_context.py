@@ -164,6 +164,7 @@ def test_model_context_limit_known_models():
     assert model_context_limit("claude-sonnet-4-6") == 1_000_000
     assert model_context_limit("claude-opus-4-6") == 1_000_000
     assert model_context_limit("claude-opus-4-7") == 1_000_000
+    assert model_context_limit("claude-opus-4-8") == 1_000_000
     assert model_context_limit("claude-opus-4-5") == 200_000
     # Gemini — all 1,048,576 (1MB binary) per ai.google.dev model pages
     assert model_context_limit("gemini-2.5-pro") == 1_048_576
@@ -176,6 +177,7 @@ def test_model_context_limit_snapshot_suffix():
     assert model_context_limit("gpt-4o-mini-2024-07-18") == 128_000
     assert model_context_limit("claude-haiku-4-5-20251001") == 200_000
     assert model_context_limit("claude-sonnet-4-6-20251101") == 1_000_000
+    assert model_context_limit("claude-opus-4-8-20260609") == 1_000_000
 
 
 def test_model_context_limit_unknown_falls_back_conservatively():

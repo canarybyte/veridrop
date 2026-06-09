@@ -6,10 +6,8 @@ Mirrors the OpenAI implementation but speaks Anthropic Messages API:
   - response uses content[].text blocks
   - usage.input_tokens (not prompt_tokens)
 
-For now we DO NOT enable the context-1m beta header, so Opus 4.7's
-effective limit stays 200k (matching Sonnet/Haiku's default tier). 1M
-testing is planned as a separate opt-in flag with explicit cost preview
-($30/run at premium tier pricing) — see docs/long_context_1m.md (TBD).
+1M models are probed only when include_long_context_extreme is enabled; the
+near-limit tier must be verified with count_tokens before sending.
 
 Opt-in (config.include_long_context). Default: skipped.
 """
@@ -17,6 +15,7 @@ Opt-in (config.include_long_context). Default: skipped.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from ....core.long_context import (
@@ -39,6 +38,17 @@ PARTIAL_THRESHOLD = 2
 # the model to recite three IDs comfortably; some Anthropic models burn
 # extra tokens on adaptive thinking, so leave headroom.
 MAX_OUTPUT_TOKENS = 256
+QUESTION_BUFFER = 1500
+TOKEN_COUNT_MARGIN = 500
+MAX_TOKEN_COUNT_ATTEMPTS = 2
+NEAR_LIMIT_PRECOUNT_THRESHOLD = 0.80
+NEAR_LIMIT_INITIAL_TARGET_RATIO = 0.62
+TOKEN_TARGET_TOLERANCE_FRAC = 0.02
+
+_PROMPT_TOO_LONG_RE = re.compile(
+    r"prompt is too long:\s*([\d,]+)\s*tokens?\s*>\s*([\d,]+)\s*maximum",
+    re.IGNORECASE,
+)
 
 
 def _tier_timeout_s(target_tokens: int) -> float:
@@ -66,6 +76,75 @@ def _looks_rate_limited(err_msg: str) -> bool:
         return False
     lower = err_msg.lower()
     return any(m in lower for m in _RATE_LIMIT_MARKERS)
+
+
+def _requires_precise_count(target_tokens: int, ctx_limit: int) -> bool:
+    return (
+        ctx_limit >= 1_000_000
+        and target_tokens >= int(ctx_limit * NEAR_LIMIT_PRECOUNT_THRESHOLD)
+    )
+
+
+def _initial_haystack_target(target_tokens: int, ctx_limit: int) -> int:
+    target = min(
+        target_tokens - QUESTION_BUFFER,
+        ctx_limit - QUESTION_BUFFER,
+    )
+    if _requires_precise_count(target_tokens, ctx_limit):
+        # Opus 1M synthetic haystacks have been observed to tokenize far
+        # denser than the shared Anthropic estimate: a nominal 950k prompt
+        # can count as ~1.56M tokens. Start below the nominal tier and let
+        # count_tokens tighten the final size.
+        target = int(target * NEAR_LIMIT_INITIAL_TARGET_RATIO)
+    return max(1000, target)
+
+
+def _within_token_target(
+    counted_tokens: int, desired_tokens: int, count_budget: int
+) -> bool:
+    lower = int(desired_tokens * (1.0 - TOKEN_TARGET_TOLERANCE_FRAC))
+    upper = min(
+        count_budget,
+        int(desired_tokens * (1.0 + TOKEN_TARGET_TOLERANCE_FRAC)),
+    )
+    return lower <= counted_tokens <= upper
+
+
+def _looks_detector_prompt_overflow(err_msg: str, ctx_limit: int) -> bool:
+    m = _PROMPT_TOO_LONG_RE.search(err_msg or "")
+    if not m:
+        return False
+    requested = int(m.group(1).replace(",", ""))
+    maximum = int(m.group(2).replace(",", ""))
+    return requested > maximum and maximum == ctx_limit
+
+
+def _skip_tier(
+    target_tokens: int,
+    needles_total: int,
+    reason: str,
+    *,
+    error: str | None = None,
+    input_tokens_precounted: int | None = None,
+    count_tokens_attempts: int = 0,
+    sizing_iterations: int = 0,
+) -> dict:
+    result = {
+        "target_tokens": target_tokens,
+        "needles_total": needles_total,
+        "needles_found": 0,
+        "status": "skip",
+        "skip_reason": reason,
+        "estimated_cost_usd": 0.0,
+        "input_tokens_reported": None,
+        "input_tokens_precounted": input_tokens_precounted,
+        "count_tokens_attempts": count_tokens_attempts,
+        "sizing_iterations": sizing_iterations,
+        "response_text_preview": None,
+    }
+    if error:
+        result["error"] = error[:1500]
+    return result
 
 
 class LongContextDetector(ActiveDetector):
@@ -177,9 +256,9 @@ class LongContextDetector(ActiveDetector):
         without sending it.
 
         Returns None on any failure (relay doesn't implement the endpoint,
-        rate-limited, network error). Caller falls back to its chars/token
-        estimate in that case — better to proceed with a slight overshoot
-        risk than to fail the whole tier on a count_tokens hiccup.
+        rate-limited, network error). Low-risk tiers may still fall back to
+        the chars/token estimate; near-limit or already-trimmed tiers skip
+        rather than risk a false truncation verdict.
         """
         try:
             _req, resp, _h, _lat = await client.count_tokens(
@@ -227,40 +306,76 @@ class LongContextDetector(ActiveDetector):
         ctx_limit: int,
     ) -> dict:
         # Use chars/tok estimation only as the FIRST guess. The real source
-        # of truth is Anthropic's /v1/messages/count_tokens endpoint — we
-        # call it before sending to know exactly how big the request will
-        # be, then trim if it would exceed ctx_limit.
-        QUESTION_BUFFER = 1500
+        # of truth is Anthropic's /v1/messages/count_tokens endpoint: trim
+        # against the counted size and re-count before sending.
         tier_seed = f"{seed}:{target_tokens}"
         needles = make_needles(tier_seed)
-        haystack_target = min(
-            target_tokens - QUESTION_BUFFER,
-            ctx_limit - QUESTION_BUFFER,
-        )
+        haystack_target = _initial_haystack_target(target_tokens, ctx_limit)
         haystack = assemble_haystack(
             haystack_target, needles, tier_seed, protocol="anthropic",
         )
         question = build_question(needles)
         full_prompt = haystack + question
 
-        # Verify exact input_tokens via count_tokens API. This is Anthropic's
-        # canonical way to predict token cost without sending — accurate to
-        # the token. If the relay doesn't support this endpoint, we silently
-        # fall through to send with our chars/tok estimate.
-        precounted = await self._precount_input_tokens(client, model, full_prompt)
-        if precounted is not None and precounted > ctx_limit - 500:
-            # Trim: compute actual chars/token and rebuild haystack to fit.
-            # The 0.97 factor is 3% extra margin in case the rebuild lands
-            # slightly larger than predicted (Anthropic's own count is
-            # deterministic per model+content though, so margin is small).
-            actual_chars_per_tok = len(full_prompt) / max(precounted, 1)
-            target_total_chars = (ctx_limit - 500) * actual_chars_per_tok * 0.97
-            new_haystack_chars = max(0, target_total_chars - len(question))
-            new_haystack_tokens = max(
-                1000, int(new_haystack_chars / actual_chars_per_tok)
+        count_budget = ctx_limit - TOKEN_COUNT_MARGIN
+        desired_count = min(target_tokens, count_budget)
+        count_required = _requires_precise_count(target_tokens, ctx_limit)
+        count_tokens_attempts = 0
+        sizing_iterations = 0
+        precounted: int | None = None
+
+        for attempt in range(MAX_TOKEN_COUNT_ATTEMPTS):
+            count_tokens_attempts += 1
+            precounted = await self._precount_input_tokens(
+                client, model, full_prompt
             )
+            if precounted is None:
+                if count_required or sizing_iterations:
+                    return _skip_tier(
+                        target_tokens,
+                        len(needles),
+                        (
+                            "count_tokens unavailable for required Anthropic "
+                            "long-context sizing; skipped to avoid a false "
+                            "truncation verdict"
+                        ),
+                        count_tokens_attempts=count_tokens_attempts,
+                        sizing_iterations=sizing_iterations,
+                    )
+                break
+            if count_required:
+                if _within_token_target(precounted, desired_count, count_budget):
+                    break
+            elif precounted <= count_budget:
+                break
+            if attempt == MAX_TOKEN_COUNT_ATTEMPTS - 1:
+                return _skip_tier(
+                    target_tokens,
+                    len(needles),
+                    (
+                        "detector prompt could not be sized to the requested "
+                        "token tier after count-driven adjustment"
+                    ),
+                    error=(
+                        f"count_tokens={precounted}, desired={desired_count}, "
+                        f"budget={count_budget}"
+                    ),
+                    input_tokens_precounted=precounted,
+                    count_tokens_attempts=count_tokens_attempts,
+                    sizing_iterations=sizing_iterations,
+                )
+
+            resize_ratio = desired_count / max(precounted, 1)
+            # When shrinking, keep a small safety margin. When growing, aim
+            # directly at the requested tier and verify again before sending.
+            safety = 0.99 if resize_ratio < 1.0 else 1.0
+            haystack_target = max(
+                1000,
+                int(haystack_target * resize_ratio * safety),
+            )
+            sizing_iterations += 1
             haystack = assemble_haystack(
-                new_haystack_tokens, needles, tier_seed, protocol="anthropic",
+                haystack_target, needles, tier_seed, protocol="anthropic",
             )
             full_prompt = haystack + question
 
@@ -297,6 +412,20 @@ class LongContextDetector(ActiveDetector):
                     "input_tokens_reported": None,
                     "response_text_preview": None,
                 }
+            if _looks_detector_prompt_overflow(err_msg, ctx_limit):
+                return _skip_tier(
+                    target_tokens,
+                    len(needles),
+                    (
+                        "provider reported the constructed prompt exceeds "
+                        "the known model context limit; treating as detector "
+                        "prompt overflow, not relay truncation"
+                    ),
+                    error=err_msg,
+                    input_tokens_precounted=precounted,
+                    count_tokens_attempts=count_tokens_attempts,
+                    sizing_iterations=sizing_iterations,
+                )
             return {
                 "target_tokens": target_tokens,
                 "needles_total": len(needles),
@@ -332,6 +461,9 @@ class LongContextDetector(ActiveDetector):
             "status": tier_status,
             "estimated_cost_usd": cost,
             "input_tokens_reported": input_tokens,
+            "input_tokens_precounted": precounted,
+            "count_tokens_attempts": count_tokens_attempts,
+            "sizing_iterations": sizing_iterations,
             "response_text_preview": text[:400],
         }
 
@@ -347,6 +479,7 @@ def _aggregate(tier_results: list[dict]) -> tuple[float, str, str]:
     inconclusive = {"skip", "rate_limited"}
     probed = [t for t in tier_results if t["status"] not in inconclusive]
     rate_limited = [t for t in tier_results if t["status"] == "rate_limited"]
+    skipped = [t for t in tier_results if t["status"] == "skip"]
 
     if not probed:
         if rate_limited:
@@ -355,6 +488,10 @@ def _aggregate(tier_results: list[dict]) -> tuple[float, str, str]:
                 f"{t['target_tokens'] // 1000}k tokens probe 触发上游 "
                 "rate limit (TPM/RPM),非中转站缺陷 —— 请稍后重试或换更高 tier 的 key"
             )
+        if skipped:
+            reason = skipped[0].get("skip_reason")
+            if isinstance(reason, str) and reason:
+                return 0.0, "skip", reason
         return 0.0, "skip", "模型自身 context 上限低于检测最低档 (32k),跳过"
 
     per_tier_pct = []
@@ -400,7 +537,15 @@ def _aggregate(tier_results: list[dict]) -> tuple[float, str, str]:
                 "(模型在长上下文中段位置的自然召回缺失,非截断)"
             )
         if skip_count > 0:
-            suffix_parts.append("更高档因模型自身上限未测")
+            skipped_for_count = any(
+                "count_tokens" in str(t.get("skip_reason", ""))
+                or "prompt overflow" in str(t.get("skip_reason", ""))
+                for t in skipped
+            )
+            if skipped_for_count:
+                suffix_parts.append("更高档因 count_tokens/构造尺寸诊断未测")
+            else:
+                suffix_parts.append("更高档因模型自身上限未测")
         if rate_limited:
             rl = rate_limited[0]
             suffix_parts.append(

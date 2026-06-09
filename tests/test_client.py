@@ -26,11 +26,12 @@ def test_normalize_base_url_accepts_trailing_v1():
 
 
 @pytest.mark.asyncio
-async def test_messages_create_strips_temperature_for_opus_4_7():
-    """Opus 4.7 rejects `temperature` (deprecated). Client must strip it."""
+@pytest.mark.parametrize("model", ["claude-opus-4-7", "claude-opus-4-8"])
+async def test_messages_create_strips_temperature_for_new_opus(model):
+    """New Opus models reject `temperature`; client must strip it."""
     sample = {
         "id": "msg_x", "type": "message", "role": "assistant",
-        "model": "claude-opus-4-7", "content": [],
+        "model": model, "content": [],
         "stop_reason": "end_turn", "stop_sequence": None,
         "usage": {"input_tokens": 1, "output_tokens": 1},
     }
@@ -45,15 +46,15 @@ async def test_messages_create_strips_temperature_for_opus_4_7():
         router.post("/v1/messages").mock(side_effect=handler)
         async with AnthropicClient(BASE_URL, "sk-test") as client:
             await client.messages_create(
-                model="claude-opus-4-7",
+                model=model,
                 max_tokens=10,
                 temperature=0,
                 messages=[{"role": "user", "content": "x"}],
             )
     assert len(captured) == 1
     sent = captured[0]
-    assert "temperature" not in sent, "temperature must be stripped for Opus 4.7"
-    assert sent["model"] == "claude-opus-4-7"
+    assert "temperature" not in sent, "temperature must be stripped for new Opus"
+    assert sent["model"] == model
     assert sent["max_tokens"] == 10  # other fields untouched
 
 

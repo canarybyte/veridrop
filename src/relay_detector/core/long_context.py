@@ -106,6 +106,7 @@ _MODEL_CONTEXT_LIMITS = {
     # Opus 4.7's pricing is flat $5/M with no >200k tier surcharge.
     "claude-haiku-4-5":   200_000,
     "claude-sonnet-4-6": 1_000_000,
+    "claude-opus-4-8":   1_000_000,
     "claude-opus-4-7":   1_000_000,
     "claude-opus-4-6":   1_000_000,
     "claude-sonnet-4-5":  200_000,
@@ -357,6 +358,7 @@ def estimate_cost_usd(target_tokens: int, model: str) -> float:
         # Anthropic (docs.anthropic.com pricing — Opus 4.x now $5/M flat)
         "claude-haiku-4-5":  1.00,
         "claude-sonnet-4-6": 3.00,
+        "claude-opus-4-8":   5.00,
         "claude-opus-4-7":   5.00,
         "claude-opus-4-6":   5.00,
         # Gemini (ai.google.dev pricing)
