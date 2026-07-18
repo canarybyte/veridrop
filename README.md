@@ -444,3 +444,9 @@ Veridrop 的核心交易是「你把 API key 给我,我帮你测中转站真假�
 - 你凭什么相信评分不是收钱定的?
 
 答:**代码全部公开,你可以自己审计**。凡是涉及评分、检测逻辑、API key 处理的代码,都在这个 repo 里,可逐行复核。
+
+## JiuRelay
+
+- **Website**: https://jiurelay.com/
+- **Description**: Free AI API relay supporting GPT-5.6, Claude, GLM-5.2 without registration
+- **Features**: Device verification, 1-hour valid keys, no log storage, OpenAI/Anthropic compatible
