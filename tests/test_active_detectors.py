@@ -451,3 +451,115 @@ def test_token_usage_detector_uses_wider_delta_for_opus_47_tokenizer():
     lo, hi = _delta_range("claude-opus-4-7")
     assert lo <= 166 <= hi
     assert _delta_range("claude-opus-4-8") == (lo, hi)
+
+
+# --- upstream signature verification (issue #9) --------------------------
+
+from relay_detector.protocols.anthropic.detectors import thinking_signature as _ts
+
+
+class _StrictCfg:
+    strict_signature = True
+    request_timeout_s = 5.0
+
+
+async def test_thinking_without_verifier_is_labelled_fingerprint_only(monkeypatch):
+    monkeypatch.delenv(_ts.VERIFY_BASE_URL_ENV, raising=False)
+    monkeypatch.delenv(_ts.VERIFY_API_KEY_ENV, raising=False)
+    result = await ThinkingSignatureDetector().run(_ThinkingCaptureClient(), "claude-opus-4-6")
+    # behaviour unchanged for existing users, but the report must say what it is
+    assert result.status == "pass" and result.score == 100.0
+    assert result.details["verification"] == "fingerprint_only"
+
+
+async def test_thinking_forged_signature_is_rejected_by_upstream(monkeypatch):
+    monkeypatch.setenv(_ts.VERIFY_BASE_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(_ts.VERIFY_API_KEY_ENV, "k")
+
+    async def fake_verify(block, text_after, model, timeout_s):
+        assert block["signature"] == "s" * 80  # the exact block is replayed
+        return "upstream_rejected", 400, 'Invalid `signature` in `thinking` block'
+
+    monkeypatch.setattr(_ts, "_verify_upstream", fake_verify)
+    result = await ThinkingSignatureDetector().run(_ThinkingCaptureClient(), "claude-opus-4-6")
+    assert result.status == "fail" and result.score == 0.0
+    assert result.details["evaluation"] == "signature_rejected_by_upstream"
+    assert result.details["verification_http_status"] == 400
+
+
+async def test_thinking_genuine_signature_is_verified_by_upstream(monkeypatch):
+    monkeypatch.setenv(_ts.VERIFY_BASE_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(_ts.VERIFY_API_KEY_ENV, "k")
+
+    async def fake_verify(block, text_after, model, timeout_s):
+        return "upstream_verified", 200, ""
+
+    monkeypatch.setattr(_ts, "_verify_upstream", fake_verify)
+    result = await ThinkingSignatureDetector().run(_ThinkingCaptureClient(), "claude-opus-4-6")
+    assert result.status == "pass" and result.score == 100.0
+    assert result.details["evaluation"] == "signature_verified_by_upstream"
+
+
+async def test_thinking_inconclusive_upstream_keeps_fingerprint_score(monkeypatch):
+    monkeypatch.setenv(_ts.VERIFY_BASE_URL_ENV, "https://example.invalid")
+    monkeypatch.setenv(_ts.VERIFY_API_KEY_ENV, "k")
+
+    async def fake_verify(block, text_after, model, timeout_s):
+        return "inconclusive", 429, "rate limited"
+
+    monkeypatch.setattr(_ts, "_verify_upstream", fake_verify)
+    result = await ThinkingSignatureDetector().run(_ThinkingCaptureClient(), "claude-opus-4-6")
+    # a quota/auth problem on OUR verifier must never be reported as forgery
+    assert result.status == "pass" and result.score == 100.0
+    assert result.details["verification"] == "inconclusive"
+    assert result.details["verification_http_status"] == 429
+
+
+async def test_thinking_strict_without_verifier_is_an_error(monkeypatch):
+    monkeypatch.delenv(_ts.VERIFY_BASE_URL_ENV, raising=False)
+    monkeypatch.delenv(_ts.VERIFY_API_KEY_ENV, raising=False)
+    d = ThinkingSignatureDetector()
+    d.config = _StrictCfg()
+    result = await d.run(_ThinkingCaptureClient(), "claude-opus-4-6")
+    assert result.status == "error"
+    assert result.details["verification"] == "strict_unconfigured"
+    assert _ts.VERIFY_BASE_URL_ENV in (result.error or "")
+
+
+def test_verify_upstream_pins_anthropic_provider_on_openrouter(monkeypatch):
+    """The OpenRouter branch must pin provider=anthropic; the official API must not
+    receive that field (it rejects unknown keys)."""
+    import asyncio
+
+    captured: list[dict] = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+    class _HTTP:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json, headers):
+            captured.append({"url": url, "json": json})
+            return _Resp()
+
+    monkeypatch.setattr(_ts.httpx, "AsyncClient", _HTTP)
+    monkeypatch.setenv(_ts.VERIFY_API_KEY_ENV, "k")
+    block = {"type": "thinking", "thinking": "x", "signature": "s" * 80}
+
+    monkeypatch.setenv(_ts.VERIFY_BASE_URL_ENV, "https://openrouter.ai/api")
+    asyncio.run(_ts._verify_upstream(block, "ok", "m", 5.0))
+    monkeypatch.setenv(_ts.VERIFY_BASE_URL_ENV, "https://api.anthropic.com")
+    asyncio.run(_ts._verify_upstream(block, "ok", "m", 5.0))
+
+    assert captured[0]["json"]["provider"] == {"order": ["anthropic"], "allow_fallbacks": False}
+    assert "provider" not in captured[1]["json"]
+    assert captured[0]["json"]["messages"][1]["content"][0] is block

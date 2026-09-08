@@ -256,6 +256,25 @@ relay-detector detect [OPTIONS]
 | `--timeout` | `30` | 单请求超时秒数 |
 | `--output` `-o` | stdout | JSON 报告输出路径 |
 
+#### 签名上游验证（可选，推荐）
+
+默认情况下 `thinking_signature` 只做**形状检查**（thinking 块存在、`signature` 非空且长度 ≥ 50），报告里标记为 `verification: fingerprint_only`。这能筛掉不返回 thinking 的替身网关，但**任何 ≥ 50 字符的字符串都能通过**，不是密码学验证。
+
+配置一个可信上游后，检测器会把中转站返回的 thinking 块原样回传给它，由 Anthropic 服务端验签（`verification: upstream_verified` / `upstream_rejected`）：
+
+```bash
+# 官方 API
+VERIDROP_ANTHROPIC_VERIFY_BASE_URL=https://api.anthropic.com
+VERIDROP_ANTHROPIC_VERIFY_API_KEY=sk-ant-...
+
+# 或 OpenRouter（自动 pin 到 anthropic provider；模型名需带前缀）
+VERIDROP_ANTHROPIC_VERIFY_BASE_URL=https://openrouter.ai/api
+VERIDROP_ANTHROPIC_VERIFY_API_KEY=sk-or-...
+VERIDROP_ANTHROPIC_VERIFY_MODEL=anthropic/claude-opus-4.6
+```
+
+判定：上游 `200` → 100 分；`400` 且报 `Invalid signature` → 0 分（fail）；`401/429/网络错误` → `inconclusive`，保留形状分数、**不会被判为伪造**。`ExecutionConfig.strict_signature=True` 时未配置上游会直接报 error，而不是静默降级为形状检查。每次验证约消耗一次 16-token 的最小请求。
+
 ### `compare`
 
 ```bash
