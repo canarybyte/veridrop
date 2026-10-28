@@ -74,7 +74,7 @@ export default function ConsolePage() {
       <div className="console-layout">
         <aside className="panel console-col-left">
           <h2 className="panel-title">检测配置</h2>
-          <p className="panel-hint">填写中转站地址与密钥，选择要跑的检测档位。</p>
+          <p className="panel-hint">选择已保存的凭据与模型，再确认要跑的检测档位。</p>
           <ConfigForm busy={busy} onStart={handleStart} />
         </aside>
 

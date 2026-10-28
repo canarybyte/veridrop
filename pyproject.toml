@@ -39,6 +39,8 @@ web = [
     "greenlet>=3.2",
     "aiosqlite>=0.20",
     "asyncpg>=0.29",
+    # API Key 加密存储(Fernet);凭据库是 Web 控制台专属能力。
+    "cryptography>=42",
 ]
 
 [project.scripts]

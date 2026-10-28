@@ -9,9 +9,7 @@ export type Protocol = "anthropic" | "openai" | "gemini";
 export type DetectionMode = "quick" | "standard" | "full";
 
 export interface DetectRequest {
-  protocol: Protocol;
-  base_url: string;
-  api_key: string;
+  credential_id: string;
   model: string;
   mode: DetectionMode;
   include_long_context: boolean;
@@ -21,6 +19,51 @@ export interface DetectRequest {
 export interface DetectResponse {
   job_id: string;
   status: string;
+}
+
+/* ---------- 凭据 ---------- */
+
+/** 后端只返回掩码，前端任何地方都不持有明文（新增/编辑时除外）。 */
+export interface Credential {
+  id: string;
+  name: string;
+  base_url: string;
+  host: string;
+  api_key_masked: string;
+  created_at: string | null;
+  updated_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface CredentialListResponse {
+  items: Credential[];
+}
+
+export interface CreateCredentialRequest {
+  name: string;
+  base_url: string;
+  api_key: string;
+}
+
+export interface UpdateCredentialRequest {
+  name?: string;
+  base_url?: string;
+  api_key?: string;
+}
+
+/* ---------- 模型探测 ---------- */
+
+export interface ModelsResponse {
+  ok: boolean;
+  auth_ok: boolean;
+  models_endpoint_supported: boolean;
+  raw_count: number;
+  all_models: string[];
+  by_protocol: Record<Protocol, string[]>;
+  best_by_protocol: Record<Protocol, string | null>;
+  status: number | null;
+  error: string | null;
+  note: string | null;
 }
 
 /* ---------- 探针 / 结论 ---------- */
@@ -151,6 +194,16 @@ export function extractDetail(detail: unknown): string {
   return detailEntryToText(detail);
 }
 
+/** 把非 2xx 响应里的 detail（其实也可以是裸数组/字符串）转成可读错误。 */
+function httpError(status: number, data: unknown): Error {
+  const detail =
+    data && typeof data === "object" && "detail" in data
+      ? (data as { detail: unknown }).detail
+      : data;
+  const message = extractDetail(detail);
+  return new Error(message || `请求失败（HTTP ${status}）`);
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -177,12 +230,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
-    const detail =
-      data && typeof data === "object" && "detail" in data
-        ? (data as { detail: unknown }).detail
-        : data;
-    const message = extractDetail(detail);
-    throw new Error(message || `请求失败（HTTP ${res.status}）`);
+    throw httpError(res.status, data);
   }
 
   return data as T;
@@ -190,6 +238,62 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function getJSON<T>(url: string): Promise<T> {
   return request<T>(url);
+}
+
+/* ---------- 凭据接口 ---------- */
+
+export function listCredentials(): Promise<CredentialListResponse> {
+  return request<CredentialListResponse>(`${API_PREFIX}/credentials`);
+}
+
+export function createCredential(body: CreateCredentialRequest): Promise<Credential> {
+  return request<Credential>(`${API_PREFIX}/credentials`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateCredential(
+  id: string,
+  body: UpdateCredentialRequest
+): Promise<Credential> {
+  return request<Credential>(`${API_PREFIX}/credentials/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+/** DELETE 成功返回 204 无响应体，不能走 JSON 解析。 */
+export async function deleteCredential(id: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_PREFIX}/credentials/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    throw new Error("网络请求失败，请确认服务可访问。");
+  }
+  if (res.ok) return;
+
+  const text = await res.text();
+  let data: unknown = text;
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      data = text;
+    }
+  }
+  throw httpError(res.status, data);
+}
+
+/** 通过后端探活中转站的 GET /models；HTTP 错误会抛异常，探测失败则以 ok=false 返回。 */
+export function fetchCredentialModels(id: string): Promise<ModelsResponse> {
+  return request<ModelsResponse>(
+    `${API_PREFIX}/credentials/${encodeURIComponent(id)}/models`,
+    { method: "POST" }
+  );
 }
 
 export function submitDetection(body: DetectRequest): Promise<DetectResponse> {
@@ -260,6 +364,9 @@ export interface ReportSummary {
   total_probes: number;
   passed_probes: number;
   failed_probes: number;
+  /** 发起检测时使用的凭据；凭据被删除后可能为 null。 */
+  credential_id: string | null;
+  credential_name: string | null;
 }
 
 export interface ReportListResponse {
@@ -317,6 +424,9 @@ export interface ReportDetail {
   total_probes: number;
   passed_probes: number;
   failed_probes: number;
+  /** 发起检测时使用的凭据；凭据被删除后可能为 null。 */
+  credential_id: string | null;
+  credential_name: string | null;
 }
 
 export interface ReportListParams {
@@ -324,6 +434,7 @@ export interface ReportListParams {
   model?: string;
   verdict?: JobVerdict;
   minScore?: number;
+  credential_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -337,6 +448,7 @@ export function listReports(params: ReportListParams = {}): Promise<ReportListRe
   if (typeof params.minScore === "number" && Number.isFinite(params.minScore)) {
     search.set("min_score", String(params.minScore));
   }
+  if (params.credential_id) search.set("credential_id", params.credential_id);
   search.set("limit", String(params.limit ?? 20));
   search.set("offset", String(params.offset ?? 0));
   return request<ReportListResponse>(`${API_PREFIX}/reports?${search.toString()}`);

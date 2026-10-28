@@ -72,6 +72,9 @@ class Job:
     finished_at: float | None = None
     report: dict[str, Any] | None = None
     error: str | None = None
+    # 凭据快照:检测是按「URL + 命名 Key」粒度的,报告要能按凭据追溯。
+    credential_id: str | None = None
+    credential_name: str | None = None
 
 
 _JOBS: dict[str, Job] = {}
@@ -92,6 +95,9 @@ async def submit(
     protocol: str = "anthropic",
     include_long_context: bool = False,
     include_long_context_extreme: bool = False,
+    *,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> str:
     """Queue a detection job and return the job id immediately.
 
@@ -111,6 +117,8 @@ async def submit(
         base_url=base_url,
         target_model=model,
         mode=mode,
+        credential_id=credential_id,
+        credential_name=credential_name,
     )
     async with _LOCK:
         _JOBS[job_id] = job
@@ -130,6 +138,7 @@ async def submit(
         _run(
             job_id, base_url, api_key, model, mode, protocol,
             include_long_context, include_long_context_extreme,
+            credential_id, credential_name,
         )
     )
     return job_id
@@ -195,6 +204,8 @@ async def _run(
     protocol: str,
     include_long_context: bool = False,
     include_long_context_extreme: bool = False,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> None:
     async with _SEMA:
         async with _LOCK:
@@ -354,6 +365,8 @@ async def _run(
                 total_probes=probes_total,
                 passed_probes=probes_passed,
                 failed_probes=probes_failed,
+                credential_id=credential_id,
+                credential_name=credential_name,
             )
 
             bus.publish(
@@ -379,6 +392,8 @@ async def _run(
                     "probes_passed": probes_passed,
                     "probes_failed": probes_failed,
                     "report_id": job_id,
+                    "credential_id": credential_id,
+                    "credential_name": credential_name,
                 },
             )
 
@@ -404,6 +419,8 @@ async def _run(
                 started_at=started_at,
                 finished_at=finished_at,
                 error=error_text,
+                credential_id=credential_id,
+                credential_name=credential_name,
             )
 
             bus.publish(
@@ -448,6 +465,8 @@ async def _persist(
     passed_probes: int = 0,
     failed_probes: int = 0,
     error: str | None = None,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> None:
     """终态入库；任何异常只打 warning，绝不影响 Job 状态与 SSE。"""
     from . import repository
@@ -481,6 +500,8 @@ async def _persist(
             total_probes=total_probes,
             passed_probes=passed_probes,
             failed_probes=failed_probes,
+            credential_id=credential_id,
+            credential_name=credential_name,
         )
     except Exception as e:  # noqa: BLE001 — 落库失败不能拖垮作业
         logger.warning("db persist failed: %s", e)

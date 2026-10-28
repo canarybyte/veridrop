@@ -1,36 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
 
-import type { DetectionMode, Protocol } from "../api";
-import { submitDetection } from "../api";
-
-interface ProtocolOption {
-  value: Protocol;
-  label: string;
-  modelHint: string;
-  models: string[];
-}
-
-const PROTOCOLS: ProtocolOption[] = [
-  {
-    value: "anthropic",
-    label: "Anthropic",
-    modelHint: "claude-* 形式，例如 claude-sonnet-4-6",
-    models: ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"],
-  },
-  {
-    value: "openai",
-    label: "OpenAI",
-    modelHint: "gpt-* 形式，例如 gpt-4o-mini",
-    models: ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-  },
-  {
-    value: "gemini",
-    label: "Gemini",
-    modelHint: "gemini-* 形式，例如 gemini-2.5-flash",
-    models: ["gemini-2.5-pro", "gemini-2.5-flash"],
-  },
-];
+import type { Credential, DetectionMode } from "../api";
+import { listCredentials, submitDetection } from "../api";
+import { CredentialForm } from "./credential-form";
+import { ModelPicker } from "./model-picker";
 
 interface ModeOption {
   value: DetectionMode;
@@ -50,10 +25,11 @@ export interface ConfigFormProps {
 }
 
 export function ConfigForm({ busy, onStart }: ConfigFormProps) {
-  const [protocol, setProtocol] = useState<Protocol>("anthropic");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [showKey, setShowKey] = useState(false);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [credentialsLoading, setCredentialsLoading] = useState(true);
+  const [credentialsError, setCredentialsError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState("");
+  const [showCredentialForm, setShowCredentialForm] = useState(false);
   const [model, setModel] = useState("");
   const [mode, setMode] = useState<DetectionMode>("standard");
   const [includeLongContext, setIncludeLongContext] = useState(false);
@@ -61,14 +37,45 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const activeProtocol = PROTOCOLS.find((item) => item.value === protocol) ?? PROTOCOLS[0];
-  const activeMode = MODES.find((item) => item.value === mode) ?? MODES[1];
   const pending = busy || submitting;
+  const selectedCredential = credentials.find((item) => item.id === selectedId) ?? null;
+  const activeMode = MODES.find((item) => item.value === mode) ?? MODES[1];
+  const trimmedModel = model.trim();
+  const canStart = Boolean(selectedId) && Boolean(trimmedModel);
 
-  const handleProtocolChange = (next: Protocol) => {
-    setProtocol(next);
-    // 切换协议后模型名格式不同，直接清空避免残留不匹配的值。
+  const loadCredentials = useCallback(async () => {
+    setCredentialsLoading(true);
+    setCredentialsError(null);
+    try {
+      const data = await listCredentials();
+      setCredentials(data.items);
+      // 选中的凭据被删掉时同步回空态。
+      setSelectedId((current) =>
+        current && !data.items.some((item) => item.id === current) ? "" : current
+      );
+    } catch (cause) {
+      setCredentialsError(cause instanceof Error ? cause.message : "获取凭据列表失败。");
+    } finally {
+      setCredentialsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCredentials();
+  }, [loadCredentials]);
+
+  const handleCredentialChange = (nextId: string) => {
+    setSelectedId(nextId);
+    // 凭据变了，旧模型一定不属于新凭据，直接清空，由 ModelPicker 重新拉列表。
     setModel("");
+    setError(null);
+  };
+
+  const handleCredentialSaved = (created: Credential) => {
+    setCredentials((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
+    setSelectedId(created.id);
+    setModel("");
+    setShowCredentialForm(false);
     setError(null);
   };
 
@@ -76,24 +83,12 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
     event.preventDefault();
     if (pending) return;
 
-    const trimmedBaseUrl = baseUrl.trim();
-    const trimmedModel = model.trim();
-    const trimmedKey = apiKey.trim();
-
-    if (!trimmedBaseUrl) {
-      setError("请填写 Base URL。");
-      return;
-    }
-    if (!/^https?:\/\//i.test(trimmedBaseUrl)) {
-      setError("Base URL 需要以 http:// 或 https:// 开头。");
-      return;
-    }
-    if (!trimmedKey) {
-      setError("请填写 API Key。");
+    if (!selectedId) {
+      setError("请先选择或新建凭据。");
       return;
     }
     if (!trimmedModel) {
-      setError(`请填写模型名（${activeProtocol.modelHint}）。`);
+      setError("请选择或手动填写模型。");
       return;
     }
 
@@ -101,9 +96,7 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
     setSubmitting(true);
     try {
       const response = await submitDetection({
-        protocol,
-        base_url: trimmedBaseUrl,
-        api_key: trimmedKey,
+        credential_id: selectedId,
         model: trimmedModel,
         mode,
         include_long_context: includeLongContext,
@@ -122,80 +115,101 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
 
   return (
     <form className="stack" onSubmit={handleSubmit} noValidate>
-      <div className="field">
-        <span className="field-label">协议</span>
-        <div className="seg" role="group" aria-label="选择协议">
-          {PROTOCOLS.map((item) => (
+      <div className="field credential-section">
+        <div className="panel-head credential-head">
+          <span className="field-label">凭据</span>
+          <div className="credential-actions">
+            <Link className="text-link small" to="/credentials">
+              凭据管理
+            </Link>
             <button
-              key={item.value}
               type="button"
-              className={`seg-btn${item.value === protocol ? " is-active" : ""}`}
-              aria-pressed={item.value === protocol}
-              onClick={() => handleProtocolChange(item.value)}
+              className="btn btn-ghost credential-new-btn"
+              aria-expanded={showCredentialForm}
+              onClick={() => setShowCredentialForm((value) => !value)}
             >
-              {item.label}
+              {showCredentialForm ? "收起" : "新建凭据"}
             </button>
-          ))}
+          </div>
         </div>
-        <span className="field-hint">{activeProtocol.modelHint}</span>
-      </div>
 
-      <label className="field">
-        <span className="field-label">Base URL</span>
-        <input
-          className="input"
-          type="url"
-          value={baseUrl}
-          placeholder="https://api.example.com/v1"
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => setBaseUrl(event.target.value)}
-        />
-      </label>
-
-      <div className="field">
-        <label className="field-label" htmlFor="detect-api-key">
-          API Key
-        </label>
-        <span className="key-field">
-          <input
-            id="detect-api-key"
-            className="input"
-            type={showKey ? "text" : "password"}
-            value={apiKey}
-            placeholder="sk-..."
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setApiKey(event.target.value)}
-          />
-          <button
-            type="button"
-            className="btn btn-ghost key-toggle"
-            onClick={() => setShowKey((value) => !value)}
+        {credentialsLoading ? (
+          <div className="model-loading" aria-hidden="true">
+            <span className="skeleton-line" />
+          </div>
+        ) : (
+          <select
+            className="input credential-select"
+            aria-label="选择凭据"
+            value={selectedId}
+            disabled={pending}
+            onChange={(event) => handleCredentialChange(event.target.value)}
           >
-            {showKey ? "隐藏" : "显示"}
-          </button>
-        </span>
+            <option value="">请选择凭据…</option>
+            {credentials.map((item) => (
+              <option key={item.id} value={item.id}>
+                {`${item.name} · ${item.host} · ${item.api_key_masked}`}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {credentialsError ? (
+          <div className="alert alert-danger credential-error" role="alert">
+            <p>{credentialsError}</p>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => void loadCredentials()}
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
+
+        {!credentialsLoading && !credentialsError && credentials.length === 0 ? (
+          <div className="credential-empty">还没有凭据，先新建一个。</div>
+        ) : null}
+
+        {showCredentialForm ? (
+          <CredentialForm
+            onSaved={handleCredentialSaved}
+            onCancel={() => setShowCredentialForm(false)}
+          />
+        ) : null}
+
+        {selectedCredential ? (
+          <div className="credential-meta">
+            <div className="info-row">
+              <span className="info-label">Base URL</span>
+              <span className="info-value">{selectedCredential.base_url}</span>
+            </div>
+            <div className="info-row">
+              <span className="info-label">API Key</span>
+              <span className="info-value">
+                <code>{selectedCredential.api_key_masked}</code>
+              </span>
+            </div>
+            <span className="field-hint">API Key 已加密保存，控制台只显示掩码，无法查看明文。</span>
+          </div>
+        ) : null}
       </div>
 
-      <label className="field">
-        <span className="field-label">模型</span>
-        <input
-          className="input"
-          type="text"
-          value={model}
-          placeholder={activeProtocol.models[0] ?? "model-name"}
-          list={`model-options-${protocol}`}
-          autoComplete="off"
-          spellCheck={false}
-          onChange={(event) => setModel(event.target.value)}
+      {selectedId ? (
+        <ModelPicker
+          key={selectedId}
+          credentialId={selectedId}
+          selectedModel={model}
+          onSelectModel={setModel}
+          disabled={pending}
         />
-        <datalist id={`model-options-${protocol}`}>
-          {activeProtocol.models.map((item) => (
-            <option key={item} value={item} />
-          ))}
-        </datalist>
-      </label>
+      ) : (
+        <div className="field">
+          <span className="field-label">模型</span>
+          <div className="placeholder-field" aria-hidden="true" />
+          <span className="field-hint">选择凭据后会自动拉取可用模型。</span>
+        </div>
+      )}
 
       <div className="field">
         <span className="field-label">检测模式</span>
@@ -206,6 +220,7 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
               type="button"
               className={`seg-btn${item.value === mode ? " is-active" : ""}`}
               aria-pressed={item.value === mode}
+              disabled={pending}
               onClick={() => setMode(item.value)}
             >
               {item.label}
@@ -221,6 +236,7 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
           <input
             type="checkbox"
             checked={includeLongContext}
+            disabled={pending}
             onChange={(event) => {
               setIncludeLongContext(event.target.checked);
               if (!event.target.checked) setIncludeExtreme(false);
@@ -232,6 +248,7 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
           <input
             type="checkbox"
             checked={includeExtreme}
+            disabled={pending}
             onChange={(event) => {
               setIncludeExtreme(event.target.checked);
               if (event.target.checked) setIncludeLongContext(true);
@@ -247,9 +264,18 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
         </p>
       ) : null}
 
-      <button className="btn btn-primary btn-block" type="submit" disabled={pending}>
+      <button
+        className="btn btn-primary btn-block"
+        type="submit"
+        disabled={pending || !canStart}
+      >
         {pending ? "检测进行中…" : "开始检测"}
       </button>
+      {!selectedId ? (
+        <span className="field-hint">请先选择或新建凭据，才能开始检测。</span>
+      ) : !trimmedModel ? (
+        <span className="field-hint">请选择或手动填写模型。</span>
+      ) : null}
     </form>
   );
 }

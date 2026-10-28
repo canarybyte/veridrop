@@ -250,6 +250,8 @@ cd web-ui && npm install && npm run build && cd ..
 |---|---|---|
 | `DATABASE_URL` | `sqlite+aiosqlite:///./web_data/veridrop.db` | 结果库;换成 `postgresql+asyncpg://...` 即用 Postgres |
 | `VERIDROP_AGENT_API_KEY` | 未设置 | 外部 agent 只读 API 的密钥;未设置时 `/api/v1/*` 返回 503 |
+| `VERIDROP_SECRET_KEY` | 未设置 | 凭据库 API Key 加密用 Fernet key(44 字符;生成:`python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"`)。不配置则读取/自动生成本地密钥文件 |
+| `VERIDROP_SECRET_FILE` | `web_data/secret.key` | 未配置 `VERIDROP_SECRET_KEY` 时的密钥文件路径;文件不存在会自动生成 |
 
 外部 agent 用 `X-API-Key`(或 `Authorization: Bearer`)访问 `GET /api/v1/reports`、`GET /api/v1/reports/{id}`、`GET /api/v1/reports/{id}/analysis`(紧凑分析载荷:评分、风险、逐探针、issues、身份、性能)。
 

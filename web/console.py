@@ -28,13 +28,19 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.exc import SQLAlchemyError
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from . import jobs, repository
+from . import jobs, probe, repository
+from .credentials import (
+    CredentialDecryptError,
+    decrypt_api_key,
+    encrypt_api_key,
+    mask_key,
+)
 from .progress import bus
 
 
@@ -297,25 +303,219 @@ agent_router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_agent_k
 # ------------------------------------------------------------------ 请求模型
 
 
-class DetectRequest(BaseModel):
-    """前端提交检测的 JSON body（字段名与前端契约一致）。"""
+def _strip_nonempty(value: str) -> str:
+    """去空白后必须非空;失败由 pydantic 转 422。"""
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must not be empty")
+    return stripped
 
-    protocol: Literal["anthropic", "openai", "gemini"]
-    base_url: str = Field(min_length=1)
-    api_key: str = Field(min_length=1)
+
+def _validate_base_url(value: str) -> str:
+    """只接受 http(s) 前缀;协议之外不做更严格的结构校验。"""
+    stripped = _strip_nonempty(value)
+    if not stripped.startswith(("http://", "https://")):
+        raise ValueError("base_url must start with http:// or https://")
+    return stripped
+
+
+def _validate_name(value: str) -> str:
+    stripped = _strip_nonempty(value)
+    if len(stripped) > 64:
+        raise ValueError("name must be at most 64 characters")
+    return stripped
+
+
+class DetectRequest(BaseModel):
+    """前端提交检测的 JSON body（凭据引用 + 模型 + 模式）。
+
+    base_url / api_key 已从请求体移除:检测对象只能是已保存的凭据,明文 key
+    不再经过前端。
+    """
+
+    credential_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
     mode: Literal["quick", "standard", "full"]
     include_long_context: bool = False
     include_long_context_extreme: bool = False
 
-    @field_validator("base_url", "api_key", "model")
+    @field_validator("credential_id", "model")
     @classmethod
     def _strip_required(cls, value: str) -> str:
         """去空白后再校验非空；校验失败交给 FastAPI 默认 422。"""
-        stripped = value.strip()
-        if not stripped:
-            raise ValueError("must not be empty")
-        return stripped
+        return _strip_nonempty(value)
+
+
+class CredentialCreate(BaseModel):
+    """新建凭据的请求体；api_key 只在此处出现一次,之后只存密文与掩码。"""
+
+    name: str
+    base_url: str
+    api_key: str
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        return _validate_name(value)
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str) -> str:
+        return _validate_base_url(value)
+
+    @field_validator("api_key")
+    @classmethod
+    def _check_api_key(cls, value: str) -> str:
+        return _strip_nonempty(value)
+
+
+class CredentialUpdate(BaseModel):
+    """PATCH 凭据:全部可选,但至少要传一项。"""
+
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_name(value)
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_base_url(value)
+
+    @field_validator("api_key")
+    @classmethod
+    def _check_api_key(cls, value: str | None) -> str | None:
+        return None if value is None else _strip_nonempty(value)
+
+    @model_validator(mode="after")
+    def _require_one(self) -> "CredentialUpdate":
+        if self.name is None and self.base_url is None and self.api_key is None:
+            raise ValueError("at least one field is required")
+        return self
+
+
+def _protocol_from_model(model: str) -> str:
+    """按模型名前缀推导协议,与前端下拉的语义保持一致。"""
+    name = model.strip().lower()
+    if name.startswith("claude"):
+        return "anthropic"
+    if name.startswith("gemini"):
+        return "gemini"
+    if name.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    return "anthropic"
+
+
+# ---------------------------------------------------------- /app/api/credentials
+
+
+async def _load_credential_secret(credential_id: str) -> dict[str, Any]:
+    """取含密文的凭据;库不可用 503,不存在 404。"""
+    try:
+        return await repository.get_credential_secret(credential_id)  # type: ignore[return-value]
+    except SQLAlchemyError as exc:
+        logger.warning("db read failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+
+@router.get("/app/api/credentials")
+async def app_credentials() -> dict[str, Any]:
+    try:
+        items = await repository.list_credentials()
+    except SQLAlchemyError as exc:
+        logger.warning("db read failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"items": items}
+
+
+@router.post("/app/api/credentials", status_code=201)
+async def app_create_credential(payload: CredentialCreate) -> dict[str, Any]:
+    encrypted = encrypt_api_key(payload.api_key)
+    masked = mask_key(payload.api_key)
+    try:
+        return await repository.create_credential(
+            name=payload.name,
+            base_url=payload.base_url,
+            api_key_enc=encrypted,
+            api_key_masked=masked,
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail="credential name already exists"
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("db write failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+
+@router.patch("/app/api/credentials/{credential_id}")
+async def app_update_credential(
+    credential_id: str, payload: CredentialUpdate
+) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if payload.name is not None:
+        updates["name"] = payload.name
+    if payload.base_url is not None:
+        updates["base_url"] = payload.base_url
+    if payload.api_key is not None:
+        # 换 key 时密文与掩码必须一起刷新,否则展示与解密会指向不同的 key。
+        updates["api_key_enc"] = encrypt_api_key(payload.api_key)
+        updates["api_key_masked"] = mask_key(payload.api_key)
+
+    try:
+        credential = await repository.update_credential(
+            credential_id, **updates
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail="credential name already exists"
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("db write failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+    if credential is None:
+        raise HTTPException(status_code=404, detail="credential not found")
+    return credential
+
+
+@router.delete("/app/api/credentials/{credential_id}", status_code=204)
+async def app_delete_credential(credential_id: str) -> Response:
+    try:
+        deleted = await repository.delete_credential(credential_id)
+    except SQLAlchemyError as exc:
+        logger.warning("db write failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="credential not found")
+    return Response(status_code=204)
+
+
+@router.post("/app/api/credentials/{credential_id}/models")
+async def app_credential_models(credential_id: str) -> dict[str, Any]:
+    """用已保存的凭据调用中转站 /models(服务端代发,前端拿不到明文 key)。"""
+    credential = await _load_credential_secret(credential_id)
+    if credential is None:
+        raise HTTPException(status_code=404, detail="credential not found")
+
+    try:
+        plain_key = decrypt_api_key(credential["api_key_enc"])
+    except CredentialDecryptError:
+        raise HTTPException(
+            status_code=503, detail="credential cannot be decrypted"
+        )
+
+    result = await probe.probe_relay(credential["base_url"], plain_key)
+    try:
+        await repository.touch_credential(credential_id)
+    except SQLAlchemyError as exc:
+        # 记录使用时间失败不影响本次结果。
+        logger.warning("touch credential failed: %s", exc)
+    return result
 
 
 # ---------------------------------------------------------- /app/api/detect
@@ -323,14 +523,28 @@ class DetectRequest(BaseModel):
 
 @router.post("/app/api/detect")
 async def app_detect(payload: DetectRequest) -> dict[str, str]:
+    credential = await _load_credential_secret(payload.credential_id)
+    if credential is None:
+        raise HTTPException(status_code=404, detail="credential not found")
+
+    try:
+        plain_key = decrypt_api_key(credential["api_key_enc"])
+    except CredentialDecryptError:
+        raise HTTPException(
+            status_code=503, detail="credential cannot be decrypted"
+        )
+
+    # 明文 key 只作为局部变量传给 jobs;Job 结束后即丢弃,不入库。
     job_id = await jobs.submit(
-        payload.base_url,
-        payload.api_key,
+        credential["base_url"],
+        plain_key,
         payload.model,
         payload.mode,
-        protocol=payload.protocol,
+        protocol=_protocol_from_model(payload.model),
         include_long_context=payload.include_long_context,
         include_long_context_extreme=payload.include_long_context_extreme,
+        credential_id=credential["id"],
+        credential_name=credential["name"],
     )
     return {"job_id": job_id, "status": "queued"}
 
@@ -400,6 +614,7 @@ async def _reports_page(
     min_score: float | None,
     limit: int,
     offset: int,
+    credential_id: str | None = None,
 ) -> dict[str, Any]:
     """分页列表；数据库不可用统一 503，不暴露 500。"""
     try:
@@ -410,12 +625,14 @@ async def _reports_page(
             min_score=min_score,
             limit=limit,
             offset=offset,
+            credential_id=credential_id,
         )
         total = await repository.count_detections(
             protocol=protocol,
             model=model,
             verdict=verdict,
             min_score=min_score,
+            credential_id=credential_id,
         )
     except SQLAlchemyError as exc:
         logger.warning("db read failed: %s", exc)
@@ -456,6 +673,8 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "total_probes",
         "passed_probes",
         "failed_probes",
+        "credential_id",
+        "credential_name",
     ):
         out.setdefault(key, None)
     return out
@@ -510,6 +729,8 @@ def _record_from_job(job: jobs.Job) -> dict[str, Any]:
         "total_probes": total,
         "passed_probes": passed,
         "failed_probes": failed,
+        "credential_id": job.credential_id,
+        "credential_name": job.credential_name,
     }
 
 
@@ -542,6 +763,7 @@ async def app_reports(
     min_score: float | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    credential_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     return await _reports_page(
         protocol=protocol,
@@ -550,6 +772,7 @@ async def app_reports(
         min_score=min_score,
         limit=limit,
         offset=offset,
+        credential_id=credential_id,
     )
 
 
@@ -669,6 +892,10 @@ async def agent_report_analysis(report_id: str) -> dict[str, Any]:
             "detected_brands": record.get("detected_brands") or [],
         },
         "performance": record.get("performance") or {},
+        "credential": {
+            "id": record.get("credential_id"),
+            "name": record.get("credential_name"),
+        },
         "probes": analysis_probes,
         "issues": issues,
         "failed_probes": failed_probes,

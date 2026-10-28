@@ -311,6 +311,10 @@ export default function ReportDetailPage() {
             </dd>
           </div>
           <div className="report-meta-item">
+            <dt>凭据</dt>
+            <dd className="report-meta-value">{detail.credential_name || "—"}</dd>
+          </div>
+          <div className="report-meta-item">
             <dt>API Key</dt>
             <dd className="report-meta-value is-mono">{detail.api_key_masked || "—"}</dd>
           </div>

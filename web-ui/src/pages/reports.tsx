@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import type { JobVerdict, Protocol, ReportSummary } from "../api";
-import { listReports } from "../api";
+import type { Credential, JobVerdict, Protocol, ReportSummary } from "../api";
+import { listCredentials, listReports } from "../api";
 import {
   MODE_LABEL,
   RiskChip,
@@ -18,6 +18,7 @@ interface Filters {
   verdict: JobVerdict | "";
   minScore: string;
   model: string;
+  credential: string;
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -25,9 +26,10 @@ const EMPTY_FILTERS: Filters = {
   verdict: "",
   minScore: "",
   model: "",
+  credential: "",
 };
 
-const COLUMN_COUNT = 9;
+const COLUMN_COUNT = 10;
 
 function scoreText(score: number | null): string {
   return score === null ? "—" : score.toFixed(1);
@@ -46,6 +48,26 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [credentialsFailed, setCredentialsFailed] = useState(false);
+
+  // 凭据下拉只用于筛选，加载失败时不阻塞报告列表。
+  useEffect(() => {
+    let active = true;
+    listCredentials()
+      .then((response) => {
+        if (!active) return;
+        setCredentials(response.items);
+        setCredentialsFailed(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setCredentialsFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -66,6 +88,7 @@ export default function ReportsPage() {
         verdict: filters.verdict || undefined,
         model: filters.model.trim() || undefined,
         minScore: validMinScore,
+        credential_id: filters.credential || undefined,
         limit: PAGE_SIZE,
         offset,
       })
@@ -91,6 +114,7 @@ export default function ReportsPage() {
     filters.verdict,
     filters.minScore,
     filters.model,
+    filters.credential,
     offset,
     reloadKey,
   ]);
@@ -109,7 +133,8 @@ export default function ReportsPage() {
     filters.protocol ||
       filters.verdict ||
       filters.minScore.trim() ||
-      filters.model.trim()
+      filters.model.trim() ||
+      filters.credential
   );
 
   const openReport = (id: string) => {
@@ -125,7 +150,7 @@ export default function ReportsPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">历史报告</h1>
-          <p className="page-subtitle">查看已完成的检测报告，按协议、结论与评分筛选。</p>
+          <p className="page-subtitle">查看已完成的检测报告，按协议、凭据、结论与评分筛选。</p>
         </div>
         <Link className="btn btn-ghost" to="/">
           去控制台检测
@@ -148,6 +173,26 @@ export default function ReportsPage() {
               <option value="openai">openai</option>
               <option value="gemini">gemini</option>
             </select>
+          </label>
+
+          <label className="field">
+            <span className="field-label">凭据</span>
+            <select
+              className="input"
+              aria-label="按凭据筛选"
+              value={filters.credential}
+              onChange={(event) => updateFilter({ credential: event.target.value })}
+            >
+              <option value="">全部</option>
+              {credentials.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+            {credentialsFailed ? (
+              <span className="field-hint">凭据列表加载失败，暂时只能按全部筛选。</span>
+            ) : null}
           </label>
 
           <label className="field">
@@ -229,6 +274,7 @@ export default function ReportsPage() {
                 <tr>
                   <th>时间</th>
                   <th>中转站</th>
+                  <th>凭据</th>
                   <th>模型</th>
                   <th>模式</th>
                   <th>总分</th>
@@ -289,6 +335,7 @@ export default function ReportsPage() {
                 <tr>
                   <th>时间</th>
                   <th>中转站</th>
+                  <th>凭据</th>
                   <th>模型</th>
                   <th>模式</th>
                   <th>总分</th>
@@ -319,6 +366,15 @@ export default function ReportsPage() {
                       <span className="reports-host" title={item.base_url}>
                         {item.host || "—"}
                       </span>
+                    </td>
+                    <td>
+                      {item.credential_name ? (
+                        <span className="reports-credential" title={item.credential_name}>
+                          {item.credential_name}
+                        </span>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                     <td>
                       <span className="reports-model">{item.target_model}</span>

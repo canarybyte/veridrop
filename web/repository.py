@@ -11,13 +11,14 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import delete, func, select
 
-from .db import Detection, ProbeResult, get_session
+from .db import Credential, Detection, ProbeResult, get_session
 
 
 def _host_from_url(base_url: str) -> str:
@@ -39,11 +40,16 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat()
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _detection_filters(
     protocol: str | None,
     model: str | None,
     verdict: str | None,
     min_score: float | None,
+    credential_id: str | None = None,
 ) -> list[Any]:
     """列表/计数共用的过滤条件,保证两边永远对得上。"""
     conditions: list[Any] = []
@@ -55,6 +61,8 @@ def _detection_filters(
         conditions.append(Detection.verdict == verdict)
     if min_score is not None:
         conditions.append(Detection.total_score >= min_score)
+    if credential_id:
+        conditions.append(Detection.credential_id == credential_id)
     return conditions
 
 
@@ -70,6 +78,133 @@ def _probe_to_dict(probe: ProbeResult) -> dict[str, Any]:
         "error": probe.error,
         "details": probe.details,
     }
+
+
+def _credential_to_dict(cred: Credential) -> dict[str, Any]:
+    """凭据的公开视图:绝不含 api_key_enc,更不含明文。"""
+    return {
+        "id": cred.id,
+        "name": cred.name,
+        "base_url": cred.base_url,
+        "host": cred.host,
+        "api_key_masked": cred.api_key_masked,
+        "created_at": _iso(cred.created_at),
+        "updated_at": _iso(cred.updated_at),
+        "last_used_at": _iso(cred.last_used_at),
+    }
+
+
+def _credential_secret_dict(cred: Credential) -> dict[str, Any]:
+    """内部视图:附带 Fernet 密文,仅供调用方解密出请求用的 key。"""
+    return {**_credential_to_dict(cred), "api_key_enc": cred.api_key_enc}
+
+
+async def create_credential(
+    *,
+    name: str,
+    base_url: str,
+    api_key_enc: str,
+    api_key_masked: str,
+) -> dict[str, Any]:
+    """新建凭据。名称冲突由唯一约束抛 IntegrityError,路由层转 409。"""
+    now = _now()
+    cred = Credential(
+        # 12 字符 URL-safe id,足够避免碰撞又短。
+        id=secrets.token_urlsafe(9),
+        name=name,
+        base_url=base_url,
+        host=_host_from_url(base_url),
+        api_key_enc=api_key_enc,
+        api_key_masked=api_key_masked,
+        created_at=now,
+        updated_at=now,
+        last_used_at=None,
+    )
+
+    async with get_session() as session:
+        async with session.begin():
+            session.add(cred)
+        # 在会话内组装返回值,避免脱离 ORM 对象后访问属性。
+        result = _credential_to_dict(cred)
+
+    return result
+
+
+async def list_credentials() -> list[dict[str, Any]]:
+    """按最近更新倒序列出全部凭据(公开视图)。"""
+    statement = select(Credential).order_by(Credential.updated_at.desc())
+
+    async with get_session() as session:
+        rows = (await session.execute(statement)).scalars().all()
+        return [_credential_to_dict(cred) for cred in rows]
+
+
+async def get_credential(credential_id: str) -> dict[str, Any] | None:
+    """公开视图的单个凭据;不存在返回 None。"""
+    async with get_session() as session:
+        cred = await session.get(Credential, credential_id)
+        if cred is None:
+            return None
+        return _credential_to_dict(cred)
+
+
+async def get_credential_secret(credential_id: str) -> dict[str, Any] | None:
+    """内部视图(含 api_key_enc);只给需要解密的地方用。"""
+    async with get_session() as session:
+        cred = await session.get(Credential, credential_id)
+        if cred is None:
+            return None
+        return _credential_secret_dict(cred)
+
+
+async def update_credential(
+    credential_id: str,
+    *,
+    name: str | None = None,
+    base_url: str | None = None,
+    api_key_enc: str | None = None,
+    api_key_masked: str | None = None,
+) -> dict[str, Any] | None:
+    """只更新传入的字段并刷新 updated_at;不存在返回 None。"""
+    async with get_session() as session:
+        async with session.begin():
+            cred = await session.get(Credential, credential_id)
+            if cred is None:
+                return None
+
+            if name is not None:
+                cred.name = name
+            if base_url is not None:
+                cred.base_url = base_url
+                cred.host = _host_from_url(base_url)
+            if api_key_enc is not None:
+                cred.api_key_enc = api_key_enc
+            if api_key_masked is not None:
+                cred.api_key_masked = api_key_masked
+            cred.updated_at = _now()
+
+            return _credential_to_dict(cred)
+
+
+async def delete_credential(credential_id: str) -> bool:
+    """删除凭据;返回是否真的删掉了一条。"""
+    async with get_session() as session:
+        async with session.begin():
+            result = await session.execute(
+                delete(Credential).where(Credential.id == credential_id)
+            )
+            return bool(result.rowcount)
+
+
+async def touch_credential(credential_id: str) -> None:
+    """记录最近一次使用时间;凭据不存在时静默返回。"""
+    async with get_session() as session:
+        async with session.begin():
+            cred = await session.get(Credential, credential_id)
+            if cred is None:
+                return None
+            cred.last_used_at = _now()
+    return None
 
 
 async def save_detection(
@@ -97,6 +232,8 @@ async def save_detection(
     total_probes: int = 0,
     passed_probes: int = 0,
     failed_probes: int = 0,
+    credential_id: str | None = None,
+    credential_name: str | None = None,
 ) -> None:
     """写入/覆盖一条检测记录及其探针结果(幂等)。
 
@@ -125,6 +262,8 @@ async def save_detection(
         "total_probes": total_probes,
         "passed_probes": passed_probes,
         "failed_probes": failed_probes,
+        "credential_id": credential_id,
+        "credential_name": credential_name,
         "created_at": created_at,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -173,6 +312,7 @@ async def list_detections(
     min_score: float | None = None,
     limit: int = 20,
     offset: int = 0,
+    credential_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """按创建时间倒序列出检测摘要(不含 report / performance 这类大字段)。"""
     statement = (
@@ -193,8 +333,14 @@ async def list_detections(
             Detection.total_probes,
             Detection.passed_probes,
             Detection.failed_probes,
+            Detection.credential_id,
+            Detection.credential_name,
         )
-        .where(*_detection_filters(protocol, model, verdict, min_score))
+        .where(
+            *_detection_filters(
+                protocol, model, verdict, min_score, credential_id
+            )
+        )
         .order_by(Detection.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -218,10 +364,11 @@ async def count_detections(
     model: str | None = None,
     verdict: str | None = None,
     min_score: float | None = None,
+    credential_id: str | None = None,
 ) -> int:
     """统计满足同样过滤条件的检测条数(供列表分页用)。"""
     statement = select(func.count()).select_from(Detection).where(
-        *_detection_filters(protocol, model, verdict, min_score)
+        *_detection_filters(protocol, model, verdict, min_score, credential_id)
     )
 
     async with get_session() as session:
@@ -271,6 +418,8 @@ async def get_detection(detection_id: str) -> dict[str, Any] | None:
             "total_probes": detection.total_probes,
             "passed_probes": detection.passed_probes,
             "failed_probes": detection.failed_probes,
+            "credential_id": detection.credential_id,
+            "credential_name": detection.credential_name,
             "created_at": _iso(detection.created_at),
             "started_at": _iso(detection.started_at),
             "finished_at": _iso(detection.finished_at),

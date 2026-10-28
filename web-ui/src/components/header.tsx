@@ -19,6 +19,9 @@ export function Header() {
           <NavLink to="/reports" className={navLinkClass}>
             历史报告
           </NavLink>
+          <NavLink to="/credentials" className={navLinkClass}>
+            凭据
+          </NavLink>
           <a className="app-nav-link app-nav-legacy" href="/">
             旧站首页
           </a>

@@ -1359,3 +1359,398 @@ code,
   }
 }
 
+/* ---------- 控制台：凭据 ---------- */
+
+.credential-head {
+  align-items: center;
+}
+
+.credential-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.credential-new-btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.credential-select {
+  cursor: pointer;
+}
+
+.credential-empty {
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.credential-error {
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.credential-error .btn {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.credential-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.credential-meta .info-label {
+  width: 70px;
+}
+
+.credential-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.form-actions .btn {
+  flex: 1;
+}
+
+/* ---------- 控制台：模型选择 ---------- */
+
+.model-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-refresh {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.model-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.skeleton-line {
+  display: block;
+  height: 13px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, #eef1f6 25%, #e2e7f0 37%, #eef1f6 63%);
+  background-size: 400% 100%;
+  animation: reports-skeleton-shimmer 1.4s ease infinite;
+}
+
+.skeleton-line-short {
+  width: 62%;
+}
+
+.alert-warning {
+  border-color: #fbe0a6;
+  background: var(--warning-soft);
+  color: #b45309;
+}
+
+.alert-warning p + p {
+  margin-top: 4px;
+}
+
+.model-detail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.model-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.model-tab {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.model-tab:hover {
+  color: var(--text);
+}
+
+.model-tab.is-active {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08);
+}
+
+.model-tab-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-tab.is-active .model-tab-count {
+  color: var(--primary);
+}
+
+.model-list {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.model-option:hover {
+  background: var(--surface-muted);
+}
+
+.model-option.is-selected {
+  background: var(--primary-soft);
+  border-color: #c7d7fb;
+}
+
+.model-option input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+  flex: none;
+  cursor: pointer;
+}
+
+.model-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.model-option .chip {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 11px;
+  flex: none;
+}
+
+.model-empty {
+  padding: 14px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.model-selected {
+  padding-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.model-selected code {
+  font-size: 11px;
+}
+
+/* ---------- 凭据管理：列表 ---------- */
+
+.credentials-form-panel {
+  padding: 16px 18px;
+}
+
+.credentials-form-panel .panel-hint {
+  margin-bottom: 12px;
+}
+
+.credentials-notice {
+  margin-bottom: 12px;
+}
+
+.credentials-notice.is-success {
+  border-color: #bbe9cb;
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.credentials-list-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.credentials-list-panel .credentials-error {
+  margin: 16px 18px 0;
+}
+
+.credentials-table {
+  min-width: 900px;
+}
+
+.credentials-row:hover {
+  background: var(--surface-muted);
+}
+
+.credentials-name {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-weight: 600;
+}
+
+.credentials-host {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.credentials-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.credentials-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.credentials-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.credentials-action-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.credentials-action-btn.is-danger {
+  color: var(--danger);
+  border-color: #f0c4c4;
+}
+
+.credentials-action-btn.is-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.credentials-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.credentials-rename-input {
+  height: 30px;
+  max-width: 200px;
+  font-size: 13px;
+}
+
+.credentials-rename-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.credentials-confirm-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
+/* ---------- 历史报告：凭据列 / 过滤条 ---------- */
+
+.reports-credential {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+@media (max-width: 760px) {
+  .reports-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+

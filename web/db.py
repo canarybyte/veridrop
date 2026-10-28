@@ -12,11 +12,13 @@ Postgres(asyncpg 驱动)。上层的 API 层只和 `repository.py` 打交道,这
 - `detections.id` 直接复用 job_id(TEXT),这样 `/r/{job_id}` 和入库记录一一对应,
   不需要额外映射。
 - 表创建走 `create_all`,幂等,进程启动时调一次 `init_db()` 即可,不引入迁移
-  框架——当前只有两张表。
+  框架。`create_all` 不会给已存在的表补列,所以 `init_db()` 里额外跑一段
+  `_ensure_columns()` 做最小限度的向后兼容迁移(只加列/加索引)。
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -31,6 +33,8 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    inspect,
+    text,
 )
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
@@ -41,6 +45,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+
+logger = logging.getLogger("veridrop")
 
 DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///./web_data/veridrop.db"
 
@@ -84,6 +90,15 @@ class Detection(Base):
     passed_probes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_probes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # 检测来自哪个凭据;凭据删除后历史报告仍需可读,所以不做外键、只留两个
+    # 冗余字段(名称快照),删除凭据不会影响已出报告。
+    credential_id: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    credential_name: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
@@ -91,6 +106,34 @@ class Detection(Base):
         DateTime(timezone=True), nullable=True
     )
     finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Credential(Base):
+    """用户命名的中转站凭据(URL + API Key)。
+
+    API Key 只存 Fernet 密文;明文永远不落库,前端也只能看到掩码。
+    ``name`` 全局唯一,重名由数据库唯一约束兜底,路由层转 409。
+    """
+
+    __tablename__ = "credentials"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(
+        String(128), nullable=False, unique=True, index=True
+    )
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_key_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_masked: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
@@ -148,6 +191,60 @@ async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(
 )
 
 
+def _ensure_columns(sync_conn: Any) -> None:
+    """给老库补上 create_all 不会自动新增的列与索引。
+
+    `create_all` 只建缺失的表,对已存在的表不补列;已部署实例升级后
+    `detections` 会缺 credential_id / credential_name。这里用 inspector 做
+    最小检测,缺什么补什么(SQLite 与 PG 都支持 ADD COLUMN)。任何一步失败
+    只记 warning,不影响进程启动——老数据照样能读,只是没有凭据信息。
+    """
+    inspector = inspect(sync_conn)
+
+    try:
+        existing_columns = {c["name"] for c in inspector.get_columns("detections")}
+    except Exception as exc:  # noqa: BLE001 — 表都没有时交给 create_all
+        logger.warning("inspect detections failed: %s", exc)
+        return
+
+    additions = (
+        ("credential_id", "VARCHAR(32)"),
+        ("credential_name", "VARCHAR(128)"),
+    )
+    for name, ddl_type in additions:
+        if name in existing_columns:
+            continue
+        try:
+            sync_conn.execute(
+                text(f"ALTER TABLE detections ADD COLUMN {name} {ddl_type}")
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("add column detections.%s failed: %s", name, exc)
+
+    # 索引同样不会被补;已存在则跳过,失败忽略。
+    try:
+        existing_indexes = {
+            idx["name"] for idx in inspector.get_indexes("detections")
+        }
+    except Exception:  # noqa: BLE001
+        existing_indexes = set()
+    for name, column in (
+        ("ix_detections_credential_id", "credential_id"),
+        ("ix_detections_credential_name", "credential_name"),
+    ):
+        if name in existing_indexes:
+            continue
+        try:
+            sync_conn.execute(
+                text(
+                    f"CREATE INDEX IF NOT EXISTS {name} "
+                    f"ON detections ({column})"
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("create index %s failed: %s", name, exc)
+
+
 async def init_db() -> None:
     """建表,可重复调用。
 
@@ -160,6 +257,7 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_columns)
 
 
 @asynccontextmanager

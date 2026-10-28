@@ -4,6 +4,7 @@ import { Header } from "./components/header";
 import ConsolePage from "./pages/console";
 import ReportsPage from "./pages/reports";
 import ReportDetailPage from "./pages/report-detail";
+import CredentialsPage from "./pages/credentials";
 
 function NotFound() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/" element={<ConsolePage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/reports/:id" element={<ReportDetailPage />} />
+          <Route path="/credentials" element={<CredentialsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
