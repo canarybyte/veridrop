@@ -33,6 +33,12 @@ web = [
     "jinja2>=3.1",
     "pillow>=10.2",
     "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+    # SQLAlchemy 的 async 引擎硬依赖 greenlet；CPython 3.14 起不会再随
+    # SQLAlchemy 自动装，显式写进来保证新环境一次装好。
+    "greenlet>=3.2",
+    "aiosqlite>=0.20",
+    "asyncpg>=0.29",
 ]
 
 [project.scripts]

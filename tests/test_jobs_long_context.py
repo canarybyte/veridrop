@@ -47,7 +47,7 @@ async def test_long_context_flag_default_false(
     """Default submission (no opt-in) sets include_long_context=False."""
     captured: list[ExecutionConfig] = []
 
-    async def fake_anthropic(*args):
+    async def fake_anthropic(*args, **kwargs):
         return await _capture_cfg(captured, *args)
 
     monkeypatch.setattr(jobs, "_run_anthropic", fake_anthropic)
@@ -80,7 +80,7 @@ async def test_long_context_flag_true_propagates(
     that lets the Web checkbox actually trigger the long-context probes."""
     captured: list[ExecutionConfig] = []
 
-    async def fake_openai(*args):
+    async def fake_openai(*args, **kwargs):
         return await _capture_cfg(captured, *args)
 
     monkeypatch.setattr(jobs, "_run_openai", fake_openai)

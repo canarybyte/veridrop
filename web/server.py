@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,7 +33,25 @@ STATIC_DIR = HERE / "static"
 logger = logging.getLogger("veridrop")
 logger.setLevel(logging.INFO)
 
-app = FastAPI(title="Veridrop", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时建表（web/db.py 的 create_all 幂等）。
+
+    导入放在函数内 + 异常只记 warning：即使 SQLAlchemy/驱动缺失或数据库连不上，
+    旧站（/、/claude 等）也必须能正常启动，检测结果只是退化成「不入库」。
+    """
+    try:
+        from .db import init_db
+
+        await init_db()
+    except Exception as e:  # noqa: BLE001 — 建表失败不能拖垮服务启动
+        logger.warning("db init failed: %s", e)
+    yield
+
+
+app = FastAPI(
+    title="Veridrop", docs_url=None, redoc_url=None, lifespan=lifespan
+)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
@@ -1060,3 +1079,12 @@ def _gemini_report_notes(report: dict) -> list[dict[str, str]]:
             ),
         })
     return notes
+
+
+# ----- React 控制台（/app）与外部 agent API（/api/v1）-----
+# 必须放在所有旧路由之后：/app/api/* 由 console router 注册，/app/assets 与
+# /app/{path:path} 兜底在 mount_frontend 里追加，注册顺序保证旧路由不被遮蔽。
+from .console import mount_frontend, router as console_router  # noqa: E402
+
+app.include_router(console_router)
+mount_frontend(app)

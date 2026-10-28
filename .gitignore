@@ -1,5 +1,7 @@
 venv/
 __pycache__/
+web-ui/node_modules/
+web-ui/dist/
 *.pyc
 *.pyo
 *.egg-info/

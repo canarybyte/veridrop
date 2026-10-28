@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import time
@@ -19,9 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from relay_detector.core.runner import ProgressCallback
 from relay_detector.models import (
     DetectionReport,
     DetectionTier,
+    DetectorResult,
     ExecutionConfig,
     Mode,
     Protocol,
@@ -31,9 +34,14 @@ from relay_detector.scorer import (
     compute_total,
     effective_verdict,
     fatal_run_error,
+    has_critical_issues,
     summary_text,
 )
 
+from .progress import bus
+
+
+logger = logging.getLogger("veridrop")
 
 JobStatus = Literal["queued", "running", "done", "error"]
 
@@ -106,6 +114,18 @@ async def submit(
     )
     async with _LOCK:
         _JOBS[job_id] = job
+    # 事件必须在 create_task 之前发出：SSE 可能比 Runner 更早连上来，先缓存
+    # queued 事件才能保证订阅者拿到完整序列（断线重连也能回放）。
+    bus.publish(
+        job_id,
+        "queued",
+        {
+            "job_id": job_id,
+            "protocol": protocol,
+            "target_model": model,
+            "mode": mode,
+        },
+    )
     asyncio.create_task(
         _run(
             job_id, base_url, api_key, model, mode, protocol,
@@ -183,6 +203,14 @@ async def _run(
                 return
             j.status = "running"
             j.started_at = time.time()
+            created_at = j.created_at
+            started_at = j.started_at
+
+        # Runner 已经负责发 run_started / probe_started / probe_finished，
+        # 这里只做转发，绝不重复发同类型事件。回调是同步契约，publish 也是
+        # 同步方法，异常由 Runner 吞掉，不会影响检测。
+        def on_event(event_type: str, payload: dict[str, Any]) -> None:
+            bus.publish(job_id, event_type, payload)
 
         try:
             cfg = ExecutionConfig.for_mode(Mode(mode), max_concurrent=3)
@@ -200,7 +228,9 @@ async def _run(
             elif include_long_context:
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 300.0)
             if protocol == "openai":
-                outcome = await _run_openai(base_url, api_key, model, cfg)
+                outcome = await _run_openai(
+                    base_url, api_key, model, cfg, on_event=on_event
+                )
                 report_protocol = Protocol.OPENAI
                 report_tier = DetectionTier.BEHAVIORAL
                 tier_title = "行为/协议级验证"
@@ -210,7 +240,9 @@ async def _run(
                     "能力是否完整、usage 字段是否符合官方响应形状。"
                 )
             elif protocol == "gemini":
-                outcome = await _run_gemini(base_url, api_key, model, cfg)
+                outcome = await _run_gemini(
+                    base_url, api_key, model, cfg, on_event=on_event
+                )
                 report_protocol = Protocol.GEMINI
                 report_tier = DetectionTier.PROTOCOL
                 tier_title = "协议级验证"
@@ -220,7 +252,9 @@ async def _run(
                     "它不提供加密级模型真伪证明。"
                 )
             elif protocol == "anthropic":
-                outcome = await _run_anthropic(base_url, api_key, model, cfg)
+                outcome = await _run_anthropic(
+                    base_url, api_key, model, cfg, on_event=on_event
+                )
                 report_protocol = Protocol.ANTHROPIC
                 report_tier = DetectionTier.CRYPTOGRAPHIC
                 tier_title = "加密级验证"
@@ -235,6 +269,7 @@ async def _run(
             score = 0.0 if run_error else compute_total(outcome.results)
             verdict = effective_verdict(score, outcome.results)
             summary = run_error or summary_text(score, verdict)
+            risk_level = _risk_level(outcome.results, score)
 
             self_id: str | None = None
             brands: list[str] = []
@@ -274,19 +309,181 @@ async def _run(
                 encoding="utf-8",
             )
 
+            probes = [
+                {
+                    "name": r.name,
+                    "display_name": r.display_name,
+                    "status": r.status,
+                    "score": r.score,
+                    "weight": r.weight,
+                    "duration_ms": r.duration_ms,
+                    "error": r.error,
+                    "details": r.details,
+                }
+                for r in outcome.results
+            ]
+            probes_total = sum(1 for r in outcome.results if r.status != "skip")
+            probes_passed = sum(1 for r in outcome.results if r.status == "pass")
+            probes_failed = sum(
+                1 for r in outcome.results if r.status in ("fail", "error")
+            )
+
+            finished_at = time.time()
             async with _LOCK:
                 if job_id in _JOBS:
                     _JOBS[job_id].status = "done"
                     _JOBS[job_id].protocol = protocol
                     _JOBS[job_id].report = report_dict
-                    _JOBS[job_id].finished_at = time.time()
+                    _JOBS[job_id].finished_at = finished_at
+
+            await _persist(
+                job_id,
+                protocol=protocol,
+                base_url=base_url,
+                target_model=model,
+                mode=mode,
+                # 只落掩码：报告里已经算好，原始 key 绝不进入持久化路径。
+                api_key_masked=report_dict["api_key_masked"],
+                status="done",
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=finished_at,
+                risk_level=risk_level,
+                report=report_dict,
+                probes=probes,
+                total_probes=probes_total,
+                passed_probes=probes_passed,
+                failed_probes=probes_failed,
+            )
+
+            bus.publish(
+                job_id,
+                "job_finished",
+                {
+                    "job_id": job_id,
+                    "total_score": report_dict["total_score"],
+                    "verdict": report_dict["verdict"],
+                    "risk_level": risk_level,
+                    "summary": report_dict.get("summary") or "",
+                    "run_error": report_dict.get("run_error"),
+                    "self_reported_identity": report_dict.get(
+                        "self_reported_identity"
+                    ),
+                    "detected_brands": report_dict.get(
+                        "detected_non_anthropic_brands"
+                    )
+                    or [],
+                    "duration_ms": int((finished_at - started_at) * 1000),
+                    "performance": report_dict.get("performance") or {},
+                    "probes_total": probes_total,
+                    "probes_passed": probes_passed,
+                    "probes_failed": probes_failed,
+                    "report_id": job_id,
+                },
+            )
 
         except Exception as e:  # noqa: BLE001 — bubble error into job state
+            error_text = f"{type(e).__name__}: {e}"
+            finished_at = time.time()
             async with _LOCK:
                 if job_id in _JOBS:
                     _JOBS[job_id].status = "error"
-                    _JOBS[job_id].error = f"{type(e).__name__}: {e}"
-                    _JOBS[job_id].finished_at = time.time()
+                    _JOBS[job_id].error = error_text
+                    _JOBS[job_id].finished_at = finished_at
+
+            await _persist(
+                job_id,
+                protocol=protocol,
+                base_url=base_url,
+                target_model=model,
+                mode=mode,
+                # 失败分支没有 report，在调用点现算掩码，原始 key 不离开内存。
+                api_key_masked=mask_api_key(api_key),
+                status="error",
+                created_at=created_at,
+                started_at=started_at,
+                finished_at=finished_at,
+                error=error_text,
+            )
+
+            bus.publish(
+                job_id,
+                "job_error",
+                {"job_id": job_id, "error": error_text},
+            )
+        finally:
+            # 成功/失败都走这一条，保证订阅者只收到一个关闭哨兵。
+            bus.close(job_id)
+
+
+def _risk_level(results: list[DetectorResult], score: float) -> str:
+    """critical 硬否决 → 高；否则按总分分档（50–69.99 为中）。"""
+    if has_critical_issues(results) or score < 50:
+        return "high"
+    if score < 70:
+        return "medium"
+    return "low"
+
+
+def _utc(ts: float | None) -> datetime | None:
+    return None if ts is None else datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+async def _persist(
+    job_id: str,
+    *,
+    protocol: str,
+    base_url: str,
+    target_model: str,
+    mode: str,
+    api_key_masked: str,
+    status: str,
+    created_at: float,
+    started_at: float | None,
+    finished_at: float,
+    risk_level: str | None = None,
+    report: dict[str, Any] | None = None,
+    probes: list[dict[str, Any]] | None = None,
+    total_probes: int = 0,
+    passed_probes: int = 0,
+    failed_probes: int = 0,
+    error: str | None = None,
+) -> None:
+    """终态入库；任何异常只打 warning，绝不影响 Job 状态与 SSE。"""
+    from . import repository
+
+    try:
+        await repository.save_detection(
+            job_id,
+            protocol=protocol,
+            base_url=base_url,
+            target_model=target_model,
+            mode=mode,
+            api_key_masked=api_key_masked,
+            status=status,
+            created_at=_utc(created_at),
+            started_at=_utc(started_at),
+            finished_at=_utc(finished_at),
+            total_score=report.get("total_score") if report else None,
+            verdict=report.get("verdict") if report else None,
+            risk_level=risk_level,
+            summary=(report.get("summary") or "") if report else "",
+            run_error=(report.get("run_error") if report else error),
+            self_reported_identity=(
+                report.get("self_reported_identity") if report else None
+            ),
+            detected_brands=(
+                report.get("detected_non_anthropic_brands") if report else None
+            ),
+            performance=(report.get("performance") if report else None),
+            report=report,
+            probes=probes,
+            total_probes=total_probes,
+            passed_probes=passed_probes,
+            failed_probes=failed_probes,
+        )
+    except Exception as e:  # noqa: BLE001 — 落库失败不能拖垮作业
+        logger.warning("db persist failed: %s", e)
 
 
 async def _run_anthropic(
@@ -294,6 +491,8 @@ async def _run_anthropic(
     api_key: str,
     model: str,
     cfg: ExecutionConfig,
+    *,
+    on_event: ProgressCallback | None = None,
 ):
     from relay_detector.protocols.anthropic import (
         build_detectors,
@@ -303,7 +502,7 @@ async def _run_anthropic(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model)
+        return await runner.run(model, on_event=on_event)
 
 
 async def _run_openai(
@@ -311,6 +510,8 @@ async def _run_openai(
     api_key: str,
     model: str,
     cfg: ExecutionConfig,
+    *,
+    on_event: ProgressCallback | None = None,
 ):
     from relay_detector.protocols.openai import (
         build_detectors,
@@ -320,7 +521,7 @@ async def _run_openai(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model)
+        return await runner.run(model, on_event=on_event)
 
 
 async def _run_gemini(
@@ -328,6 +529,8 @@ async def _run_gemini(
     api_key: str,
     model: str,
     cfg: ExecutionConfig,
+    *,
+    on_event: ProgressCallback | None = None,
 ):
     from relay_detector.protocols.gemini import (
         build_detectors,
@@ -337,4 +540,4 @@ async def _run_gemini(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model)
+        return await runner.run(model, on_event=on_event)

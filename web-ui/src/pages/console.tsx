@@ -1,0 +1,115 @@
+import { useState } from "react";
+
+import { ConfigForm } from "../components/config-form";
+import { EventLog } from "../components/event-log";
+import { ProbeGrid } from "../components/probe-grid";
+import { ScorePanel } from "../components/score-panel";
+import type { StreamStatus } from "../hooks/use-detection-stream";
+import { useDetectionStream } from "../hooks/use-detection-stream";
+import type { JobFinishedPayload } from "../api";
+
+function headerChip(
+  status: StreamStatus,
+  reconnecting: boolean,
+  jobResult: JobFinishedPayload | null
+): { label: string; chip: string } {
+  if (reconnecting && (status === "connecting" || status === "running")) {
+    return { label: "正在重连…", chip: "chip-warning" };
+  }
+  switch (status) {
+    case "idle":
+      return { label: "待开始", chip: "chip-muted" };
+    case "connecting":
+      return { label: "连接中", chip: "chip-primary" };
+    case "running":
+      return { label: "检测中", chip: "chip-primary" };
+    case "finished":
+      if (jobResult?.verdict === "passed") {
+        return { label: "检测完成", chip: "chip-success" };
+      }
+      if (jobResult?.verdict === "marginal") {
+        return { label: "存在偏差", chip: "chip-warning" };
+      }
+      return { label: "检测未通过", chip: "chip-danger" };
+    case "error":
+      return { label: "检测失败", chip: "chip-danger" };
+  }
+}
+
+export default function ConsolePage() {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const {
+    status,
+    events,
+    probes,
+    jobResult,
+    jobError,
+    progress,
+    reconnecting,
+  } = useDetectionStream(jobId);
+
+  const busy = status === "connecting" || status === "running";
+  const badge = headerChip(status, reconnecting, jobResult);
+
+  const handleStart = (nextJobId: string) => {
+    // jobId 变化会让 hook 先重置上一轮状态，再订阅新的任务流。
+    setJobId(nextJobId);
+  };
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <h1 className="page-title">控制台</h1>
+          <p className="page-subtitle">
+            发起一次中转站检测，实时查看逐项探针进度与最终结论。
+          </p>
+        </div>
+        <span className={`chip ${badge.chip}`}>
+          <span className="chip-dot" aria-hidden="true" />
+          {badge.label}
+        </span>
+      </div>
+
+      <div className="console-layout">
+        <aside className="panel console-col-left">
+          <h2 className="panel-title">检测配置</h2>
+          <p className="panel-hint">填写中转站地址与密钥，选择要跑的检测档位。</p>
+          <ConfigForm busy={busy} onStart={handleStart} />
+        </aside>
+
+        <section className="panel console-col-center">
+          {jobError ? (
+            <div className="alert alert-danger" role="alert">
+              检测失败：{jobError}
+            </div>
+          ) : null}
+
+          <div className="panel-head">
+            <h2 className="panel-title">探针</h2>
+            <span className={`chip ${busy ? "chip-primary" : "chip-muted"}`}>
+              {progress.done}/{progress.total || "—"}
+            </span>
+          </div>
+          <p className="panel-hint">
+            探针会并发执行，结果按完成顺序回填；被跳过的探针也会保留在列表中。
+          </p>
+
+          <ProbeGrid probes={probes} progress={progress} />
+          <EventLog events={events} />
+        </section>
+
+        <aside className="panel console-col-right">
+          <h2 className="panel-title">结论</h2>
+          <p className="panel-hint">综合评分、风险等级与关键证据。</p>
+          <ScorePanel
+            progress={progress}
+            probes={probes}
+            jobResult={jobResult}
+            status={status}
+          />
+        </aside>
+      </div>
+    </div>
+  );
+}

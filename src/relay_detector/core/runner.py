@@ -30,6 +30,8 @@ ThrottledClientFactory = Callable[
     Any,
 ]
 TTFTProbe = Callable[[Any, str], Awaitable[None]]
+# 进度回调：(事件类型, payload)。回调异常会被 Runner 吞掉，绝不影响检测。
+ProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 @dataclass
@@ -56,6 +58,50 @@ class Runner:
         self._throttled_client_factory = throttled_client_factory
         self._ttft_probe = ttft_probe
 
+    @staticmethod
+    def _emit(
+        on_event: ProgressCallback | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """发送进度事件；未传回调时直接返回，回调抛错一律吞掉。"""
+        if on_event is None:
+            return
+        try:
+            on_event(event_type, payload)
+        except Exception:  # noqa: BLE001 — 进度回调绝不能影响检测
+            pass
+
+    @staticmethod
+    def _describe(d: BaseDetector) -> dict[str, Any]:
+        return {
+            "name": d.name,
+            "display_name": d.display_name,
+            "weight": d.weight,
+            "passive": isinstance(d, PassiveDetector),
+        }
+
+    @staticmethod
+    def _finished_payload(
+        result: DetectorResult,
+        *,
+        passive: bool,
+        skip_reason: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": result.name,
+            "display_name": result.display_name,
+            "weight": result.weight,
+            "status": result.status,
+            "score": result.score,
+            "duration_ms": result.duration_ms,
+            "error": result.error,
+            "passive": passive,
+        }
+        if skip_reason is not None:
+            payload["skip_reason"] = skip_reason
+        return payload
+
     def _select_detectors(self, model: str) -> list[BaseDetector]:
         mode_set = self._mode_detectors[self._config.mode]
         selected: list[BaseDetector] = []
@@ -67,10 +113,23 @@ class Runner:
             selected.append(d)
         return selected
 
-    async def run(self, model: str) -> RunOutcome:
+    async def run(
+        self,
+        model: str,
+        on_event: ProgressCallback | None = None,
+    ) -> RunOutcome:
         selected = self._select_detectors(model)
         active = [d for d in selected if isinstance(d, ActiveDetector)]
         passive = [d for d in selected if isinstance(d, PassiveDetector)]
+
+        self._emit(
+            on_event,
+            "run_started",
+            {
+                "total": len(selected),
+                "detectors": [self._describe(d) for d in selected],
+            },
+        )
 
         client = self._throttled_client_factory(
             self._base_client,
@@ -88,14 +147,59 @@ class Runner:
                 if d.name not in self._mode_detectors[self._config.mode]
                 else "model-excluded"
             )
-            skipped.append(d.skip(reason))
+            result = d.skip(reason)
+            skipped.append(result)
+            self._emit(
+                on_event,
+                "probe_finished",
+                self._finished_payload(
+                    result,
+                    passive=isinstance(d, PassiveDetector),
+                    skip_reason=reason,
+                ),
+            )
+
+        # 被动探针不自己发请求，run_started 之后先告知前端它们在被动观察中。
+        for d in passive:
+            self._emit(
+                on_event,
+                "probe_started",
+                {
+                    "name": d.name,
+                    "display_name": d.display_name,
+                    "passive": True,
+                },
+            )
 
         # Inject config for detectors that branch on mode (e.g. ConsistencyDetector)
         for d in selected:
             d.config = self._config
 
+        finished_active: set[str] = set()
+
         async def run_one(d: ActiveDetector) -> DetectorResult:
-            return await d._timed_run(client, model)
+            self._emit(
+                on_event,
+                "probe_started",
+                {
+                    "name": d.name,
+                    "display_name": d.display_name,
+                    "passive": False,
+                },
+            )
+            try:
+                result = await d._timed_run(client, model)
+            except asyncio.CancelledError:
+                # 整体超时导致 wait_for 取消：不把“取消”当作探针异常上报，
+                # 也不吞掉取消本身；超时分支会统一生成 error 结果并补发事件。
+                raise
+            finished_active.add(d.name)
+            self._emit(
+                on_event,
+                "probe_finished",
+                self._finished_payload(result, passive=False),
+            )
+            return result
 
         run_started = time.perf_counter()
         try:
@@ -113,6 +217,15 @@ class Runner:
                 )
                 for d in active
             ]
+            # 超时前已完成的探针已在 run_one 里发过事件，这里只补发其余探针。
+            for d, result in zip(active, active_results):
+                if d.name in finished_active:
+                    continue
+                self._emit(
+                    on_event,
+                    "probe_finished",
+                    self._finished_payload(result, passive=False),
+                )
         total_latency_ms = int((time.perf_counter() - run_started) * 1000)
 
         # Quick mode contains no streaming detector (integrity is the only one,
@@ -127,7 +240,15 @@ class Runner:
             except Exception:  # noqa: BLE001 — probe failures must not crash run
                 pass
 
-        passive_results = [d.finalize() for d in passive]
+        passive_results: list[DetectorResult] = []
+        for d in passive:
+            result = d.finalize()
+            passive_results.append(result)
+            self._emit(
+                on_event,
+                "probe_finished",
+                self._finished_payload(result, passive=True),
+            )
 
         # TTFT: best-case first-token latency observed across all streamed
         # requests. None when no detector did a stream (e.g. quick mode with

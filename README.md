@@ -232,6 +232,28 @@ nano .env  # 填 ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_MODEL
 - `POST /api/detect` 提交检测任务(异步)
 - `/faq` 常见问题(35+ 问答,含 JSON-LD 结构化数据)
 
+#### React 控制台(`/app`,与旧站并存)
+
+`/app` 是新版控制台:左栏填配置,中栏按探针粒度实时显示并发进度与运行日志,右栏是评分/风险结论。它复用同一套探测内核,与旧站互不影响。
+
+```bash
+# 首次或前端改动后构建(产物输出到 web/static/app/)
+cd web-ui && npm install && npm run build && cd ..
+
+# 启动服务,访问 http://localhost:8000/app
+./venv/bin/uvicorn web.server:app --host 0.0.0.0 --port 8000
+```
+
+进度通过 SSE 推送:`GET /app/api/detect/{job_id}/events`(支持 `Last-Event-ID` 断线重放),最终评分与逐探针结果同时写入数据库。
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `DATABASE_URL` | `sqlite+aiosqlite:///./web_data/veridrop.db` | 结果库;换成 `postgresql+asyncpg://...` 即用 Postgres |
+| `VERIDROP_AGENT_API_KEY` | 未设置 | 外部 agent 只读 API 的密钥;未设置时 `/api/v1/*` 返回 503 |
+
+外部 agent 用 `X-API-Key`(或 `Authorization: Bearer`)访问 `GET /api/v1/reports`、`GET /api/v1/reports/{id}`、`GET /api/v1/reports/{id}/analysis`(紧凑分析载荷:评分、风险、逐探针、issues、身份、性能)。
+
+
 ---
 
 ## 三档运行模式
