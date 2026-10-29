@@ -691,6 +691,20 @@ export function getReport(id: string): Promise<ReportDetail> {
   return request<ReportDetail>(`${API_PREFIX}/reports/${encodeURIComponent(id)}`);
 }
 
+export interface DeepOnlyResponse {
+  job_id: string;
+  status: string;
+  source_report_id: string;
+}
+
+/** 对一条历史检测补跑深度诊断；返回新任务 id，前端用它接管控制台的事件流。 */
+export function startReportDeep(reportId: string): Promise<DeepOnlyResponse> {
+  return request<DeepOnlyResponse>(
+    `${API_PREFIX}/reports/${encodeURIComponent(reportId)}/deep`,
+    { method: "POST" }
+  );
+}
+
 /** 按报告查询已采集的上游请求-响应对；probe 可选，用于按探针 name 过滤。 */
 export function listReportExchanges(
   id: string,

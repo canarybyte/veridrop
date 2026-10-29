@@ -258,6 +258,22 @@ async def touch_credential(credential_id: str) -> None:
     return None
 
 
+async def update_deep_report(
+    detection_id: str,
+    deep_report: dict[str, Any],
+    deep_status: str,
+) -> bool:
+    """给已存在的检测补写深度诊断结果;记录不存在返回 False。"""
+    async with get_session() as session:
+        async with session.begin():
+            detection = await session.get(Detection, detection_id)
+            if detection is None:
+                return False
+            detection.deep_report = _json_safe(deep_report)
+            detection.deep_status = deep_status
+    return True
+
+
 async def save_detection(
     detection_id: str,
     *,

@@ -24,6 +24,7 @@ import logging
 import os
 import secrets
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 from urllib.parse import urlparse
@@ -224,6 +225,140 @@ def _synthetic_terminal_event(job: jobs.Job, seq: int) -> dict[str, Any] | None:
             "report_id": job.id,
         },
     }
+
+
+def _db_replay_events(
+    record: dict[str, Any], include_deep: bool = True
+) -> list[dict[str, Any]]:
+    """把数据库里的历史检测还原成与实时流同形状的事件序列。
+
+    只用于内存与磁盘都找不到的历史任务：探针结果 → probe_finished，
+    终态 → job_finished / job_error；有深测结果时追加 deep_started / deep_progress /
+    deep_finished。运行中（服务重启时未结束）的记录给出中断提示。
+    include_deep=False 时不还原深测（补跑深测的回放会自行衔接新的深测事件）。
+    """
+    job_id = record["id"]
+    probes = record.get("probes") or []
+    deep_report = record.get("deep_report") if isinstance(record.get("deep_report"), dict) else None
+    has_deep = include_deep and deep_report is not None
+    events: list[dict[str, Any]] = []
+
+    def add(event_type: str, payload: dict[str, Any]) -> None:
+        events.append(
+            {"seq": len(events) + 1, "ts": 0, "type": event_type, "payload": payload}
+        )
+
+    add(
+        "run_started",
+        {
+            "total": len(probes),
+            "detectors": [
+                {
+                    "name": p["name"],
+                    "display_name": p["display_name"],
+                    "weight": p["weight"],
+                    "passive": False,
+                }
+                for p in probes
+            ],
+        },
+    )
+    for p in probes:
+        add(
+            "probe_finished",
+            {
+                "name": p["name"],
+                "display_name": p["display_name"],
+                "weight": p["weight"],
+                "status": p["status"],
+                "score": p["score"],
+                "duration_ms": p["duration_ms"],
+                "error": p["error"],
+                "passive": False,
+            },
+        )
+
+    status = record.get("status")
+    if status == "done":
+        report = record.get("report") or {}
+        add(
+            "job_finished",
+            {
+                "job_id": job_id,
+                "total_score": record.get("total_score"),
+                "verdict": record.get("verdict"),
+                "risk_level": record.get("risk_level"),
+                "summary": record.get("summary") or "",
+                "run_error": record.get("run_error"),
+                "self_reported_identity": record.get("self_reported_identity"),
+                "detected_brands": list(record.get("detected_brands") or []),
+                "selected_probes": list(report.get("selected_probes") or []),
+                "duration_ms": _duration_ms(record),
+                "performance": record.get("performance") or {},
+                "probes_total": record.get("total_probes") or 0,
+                "probes_passed": record.get("passed_probes") or 0,
+                "probes_failed": record.get("failed_probes") or 0,
+                "report_id": job_id,
+                # 有深测结果才声明 deep_enabled,前端据此等待随后的 deep_* 事件。
+                "deep_enabled": include_deep and has_deep,
+                "deep_status": record.get("deep_status") if has_deep else "skipped",
+            },
+        )
+    elif status == "error":
+        add(
+            "job_error",
+            {
+                "job_id": job_id,
+                "error": record.get("run_error") or record.get("summary") or "检测任务异常结束",
+            },
+        )
+    else:
+        add(
+            "job_error",
+            {"job_id": job_id, "error": "检测未完成：服务重启时该任务已中断。"},
+        )
+    if has_deep:
+        checks = sorted(
+            (c for c in (deep_report.get("checks") or []) if isinstance(c, dict)),
+            key=lambda c: int(c.get("id") or 0),
+        )
+        add(
+            "deep_started",
+            {
+                "total": len(checks) or 13,
+                "checks": [{"id": c.get("id"), "title": c.get("title")} for c in checks],
+            },
+        )
+        for check in checks:
+            add("deep_progress", check)
+        add(
+            "deep_finished",
+            {
+                "status": "error" if record.get("deep_status") == "error" else "done",
+                "error": deep_report.get("error"),
+                "duration_ms": deep_report.get("duration_ms") or 0,
+                "metrics": deep_report.get("metrics") or {},
+                "checks": checks,
+            },
+        )
+    return events
+
+
+def _duration_ms(record: dict[str, Any]) -> int:
+    """历史记录的耗时；缺少起止时间时给 0。"""
+    started, finished = record.get("started_at"), record.get("finished_at")
+    if not started or not finished:
+        return 0
+    try:
+        delta = datetime.fromisoformat(finished) - datetime.fromisoformat(started)
+    except ValueError:
+        return 0
+    return max(0, int(delta.total_seconds() * 1000))
+
+
+async def _replay_stream(events: list[dict[str, Any]]) -> AsyncIterator[str]:
+    for event in events:
+        yield _format_sse(event)
 
 
 async def _event_stream(
@@ -625,6 +760,20 @@ async def app_detect_events(
     last_event_id_header: str | None = Header(default=None, alias="Last-Event-ID"),
     last_event_id: int | None = Query(default=None),
 ) -> StreamingResponse:
+    # 历史记录优先从数据库还原:磁盘 JSON 只含终态,无法回放探针与深测事件。
+    # 仅内存中仍存活(运行中或刚结束、总线仍有缓存)的任务走实时流。
+    if not jobs.is_live(job_id) and not bus.get_events(job_id):
+        try:
+            record = await repository.get_detection(job_id)
+        except SQLAlchemyError:
+            record = None
+        if record is not None:
+            return StreamingResponse(
+                _replay_stream(_db_replay_events(record)),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
     job = await jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -879,6 +1028,56 @@ async def app_report_detail(report_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="report not found")
     return record
+
+
+_DEEP_NEEDS_CREDENTIAL = "该记录的凭据已删除，无法做深度诊断，请重新检测。"
+
+
+@router.post("/app/api/reports/{report_id}/deep", status_code=202)
+async def app_report_deep(report_id: str) -> dict[str, str]:
+    """对一条已完成的历史检测补跑深度诊断(13–25 项)。
+
+    先回放原记录的探针结果与结论,再跑深测,结果补写回原记录。
+    凭据仍在时才能解密 Key;凭据被删除则拒绝。
+    """
+    try:
+        record = await repository.get_detection(report_id)
+    except SQLAlchemyError:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    if record is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    if record.get("status") != "done" or not record.get("probes"):
+        raise HTTPException(status_code=409, detail="只能对已完成且有探针结果的检测做深度诊断")
+
+    cred_id = record.get("credential_id")
+    credential = await _load_credential_secret(cred_id) if cred_id else None
+    if credential is None:
+        raise HTTPException(status_code=409, detail=_DEEP_NEEDS_CREDENTIAL)
+    try:
+        plain_key = decrypt_api_key(credential["api_key_enc"])
+    except CredentialDecryptError:
+        raise HTTPException(status_code=503, detail="credential cannot be decrypted")
+
+    # 回放原记录的事件;终态 job_finished 需声明本次深测已开启,前端才会继续等待 deep_finished。
+    replay: list[tuple[str, dict[str, Any]]] = []
+    for event in _db_replay_events(record, include_deep=False):
+        payload = event["payload"]
+        if event["type"] == "job_finished":
+            payload = {**payload, "deep_enabled": True, "deep_status": "running"}
+        replay.append((event["type"], payload))
+
+    job_id = await jobs.submit_deep_only(
+        report_id,
+        credential["base_url"],
+        plain_key,
+        record["target_model"],
+        record["protocol"],
+        main_report=record.get("report"),
+        replay_events=replay,
+        credential_id=credential["id"],
+        credential_name=credential["name"],
+    )
+    return {"job_id": job_id, "status": "queued", "source_report_id": report_id}
 
 
 @router.get("/app/api/reports/{report_id}/exchanges")

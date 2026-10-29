@@ -12,13 +12,21 @@ import { ProbePicker } from "./probe-picker";
 export interface ConfigFormProps {
   busy: boolean;
   onStart: (jobId: string) => void;
+  /** 凭据选择变化时通知父组件（历史记录据此过滤）。 */
+  onCredentialChange?: (credentialId: string) => void;
 }
 
-export function ConfigForm({ busy, onStart }: ConfigFormProps) {
+export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(true);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState("");
+
+  // 凭据变化时通知父组件（历史记录据此过滤）。
+  useEffect(() => {
+    onCredentialChange?.(selectedId);
+  }, [selectedId, onCredentialChange]);
+
   const [showCredentialForm, setShowCredentialForm] = useState(false);
   const [model, setModel] = useState("");
   const [selectedProbes, setSelectedProbes] = useState<string[]>([]);

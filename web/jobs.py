@@ -173,6 +173,161 @@ async def submit(
     return job_id
 
 
+async def submit_deep_only(
+    record_id: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    protocol: str,
+    *,
+    main_report: dict[str, Any] | None,
+    replay_events: list[tuple[str, dict[str, Any]]],
+    credential_id: str | None,
+    credential_name: str | None,
+) -> str:
+    """对一条历史检测只补跑深度诊断(13–25 项),返回新任务 id。
+
+    任务先回放原记录的探针结果与结论(replay_events),再跑深测;
+    完成后把深测结果补写回原记录 ``record_id``。原始 api_key 只作参数传递。
+    """
+    job_id = _new_job_id()
+    job = Job(
+        id=job_id,
+        protocol=protocol,
+        base_url=base_url,
+        target_model=model,
+        credential_id=credential_id,
+        credential_name=credential_name,
+        deep=True,
+    )
+    async with _LOCK:
+        _JOBS[job_id] = job
+    bus.publish(
+        job_id,
+        "queued",
+        {
+            "job_id": job_id,
+            "protocol": protocol,
+            "target_model": model,
+            "deep": True,
+            "source_report_id": record_id,
+        },
+    )
+    asyncio.create_task(
+        _run_deep_only(
+            job_id, record_id, base_url, api_key, model, protocol,
+            main_report, list(replay_events),
+        )
+    )
+    return job_id
+
+
+async def _run_deep_only(
+    job_id: str,
+    record_id: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    protocol: str,
+    main_report: dict[str, Any] | None,
+    replay_events: list[tuple[str, dict[str, Any]]],
+) -> None:
+    async with _SEMA:
+        try:
+            async with _LOCK:
+                j = _JOBS.get(job_id)
+                if j is not None:
+                    j.status = "running"
+                    j.started_at = time.time()
+                    j.deep_status = "running"
+
+            for event_type, payload in replay_events:
+                bus.publish(job_id, event_type, payload)
+
+            bus.publish(
+                job_id,
+                "deep_started",
+                {
+                    "total": DEEP_TOTAL,
+                    "checks": [
+                        {"id": cid, "title": title}
+                        for cid, title in sorted(
+                            CHECK_TITLES.items(), key=lambda item: int(item[0])
+                        )
+                    ],
+                },
+            )
+            deep_status = "done"
+            try:
+                deep_report = await asyncio.wait_for(
+                    run_deep(
+                        base_url,
+                        api_key,
+                        model,
+                        protocol,
+                        on_progress=lambda check: bus.publish(
+                            job_id, "deep_progress", check
+                        ),
+                        main_report=main_report,
+                    ),
+                    timeout=_DEEP_TIMEOUT_S,
+                )
+                bus.publish(
+                    job_id,
+                    "deep_finished",
+                    {
+                        "status": "done",
+                        "error": None,
+                        "duration_ms": deep_report.get("duration_ms"),
+                        "metrics": deep_report.get("metrics") or {},
+                        "checks": deep_report.get("checks") or [],
+                    },
+                )
+            except Exception as e:  # noqa: BLE001 — 深测失败只记录,不影响历史记录
+                error_text = f"{type(e).__name__}: {e}"
+                deep_status = "error"
+                deep_report = {
+                    "enabled": True,
+                    "status": "error",
+                    "error": error_text,
+                    "checks": [],
+                }
+                bus.publish(
+                    job_id,
+                    "deep_finished",
+                    {"status": "error", "error": error_text, "checks": []},
+                )
+
+            async with _LOCK:
+                j = _JOBS.get(job_id)
+                if j is not None:
+                    j.status = "done"
+                    j.finished_at = time.time()
+                    j.deep_status = deep_status
+                    j.deep_report = deep_report
+
+            await _persist_deep_to_record(record_id, deep_report, deep_status)
+        finally:
+            bus.close(job_id)
+
+
+async def _persist_deep_to_record(
+    record_id: str, deep_report: dict[str, Any], deep_status: str
+) -> None:
+    """把深测结果补写回原检测记录;库不可用只打 warning。"""
+    from . import repository
+
+    try:
+        await repository.update_deep_report(record_id, deep_report, deep_status)
+    except Exception as exc:  # noqa: BLE001 — 落库失败不影响任务收尾
+        logger.warning("深度诊断结果写回记录失败 %s: %s", record_id, exc)
+
+
+def is_live(job_id: str) -> bool:
+    """任务是否仍在内存中(运行中或本进程内刚结束)。"""
+    return job_id in _JOBS
+
+
 async def get(job_id: str) -> Job | None:
     """Look up a job by id. Falls back to disk for jobs that survived a restart."""
     async with _LOCK:
