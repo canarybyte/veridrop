@@ -7,11 +7,11 @@
   <div class="spinner" aria-hidden="true"></div>
   <h2 id="status-headline">正在检测中…</h2>
   <p class="muted">
-    目标模型:<code>{{ job.target_model }}</code> · 检测深度 <code>{{ job.mode }}</code><br/>
+    目标模型:<code>{{ job.target_model }}</code><br/>
     中转站:<code>{{ job.base_url }}</code>
   </p>
   <p class="muted">
-    完整模式会并行发起 13 次接口请求,通常 90 秒内完成。本页面会自动刷新——你也可以保存本网址稍后再来查看结果。
+    本次检测会并行发起所选探针的接口请求,通常 90 秒内完成。本页面会自动刷新——你也可以保存本网址稍后再来查看结果。
   </p>
   <p class="form-error" id="run-error" hidden></p>
 </section>

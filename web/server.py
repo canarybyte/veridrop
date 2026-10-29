@@ -23,6 +23,7 @@ from . import jobs, leaderboard
 from .faq_data import FAQ_CATEGORIES, faqpage_jsonld, total_question_count
 from .image_report import render_report_jpg
 from .probe import probe_model_alive, probe_relay
+from .probe_catalog import build_catalog
 from .ratelimit import check_rate
 
 
@@ -75,7 +76,6 @@ async def no_html_cache(request: Request, call_next):
     return response
 
 
-_VALID_MODES = {"quick", "standard", "full"}
 _VALID_WISHLIST_PROTOCOLS = {"openai", "gemini"}
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 WISHLIST_PATH = Path(
@@ -393,6 +393,26 @@ async def api_probe(
     return JSONResponse(payload)
 
 
+def _legacy_probe_names(
+    protocol: str,
+    model: str,
+    include_long_context: bool = False,
+    include_long_context_extreme: bool = False,
+) -> list[str]:
+    """旧表单接口没有探针选择器:取该模型下全部可用的探针。
+
+    长上下文探针只有在对应开关开启时才纳入,与旧版 include_long_context 语义一致。
+    """
+    names = [
+        item["name"]
+        for item in build_catalog(protocol, model)["probes"]
+        if item["applies"]
+    ]
+    if not (include_long_context or include_long_context_extreme):
+        names = [name for name in names if name != "long_context"]
+    return names
+
+
 @app.post("/api/detect")
 @app.post("/api/detect/claude")
 async def api_detect_claude(
@@ -401,14 +421,12 @@ async def api_detect_claude(
     base_url: str = Form(...),
     api_key: str = Form(...),
     model: str = Form(...),
-    mode: str = Form("full"),
     include_long_context: bool = Form(False),
     include_long_context_extreme: bool = Form(False),
 ) -> JSONResponse:
     base_url = base_url.strip()
     api_key = api_key.strip()
     model = model.strip()
-    mode = mode.strip().lower()
 
     if not base_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="base_url must start with http(s)://")
@@ -421,8 +439,6 @@ async def api_detect_claude(
     # reasonable through and let the upstream relay decide what's valid.
     if not model or len(model) > 200:
         raise HTTPException(status_code=400, detail="model must be 1–200 chars")
-    if mode not in _VALID_MODES:
-        raise HTTPException(status_code=400, detail=f"mode must be one of {_VALID_MODES}")
 
     if request.url.path == "/api/detect":
         response.headers["Deprecation"] = "true"
@@ -431,10 +447,13 @@ async def api_detect_claude(
         if inferred != "anthropic":
             await _preflight_or_422(request, base_url, api_key, model, inferred)
             job_id = await jobs.submit(
-                base_url, api_key, model, mode,
+                base_url, api_key, model,
                 protocol=inferred,
                 include_long_context=include_long_context,
                 include_long_context_extreme=include_long_context_extreme,
+                selected_probes=_legacy_probe_names(
+                    inferred, model, include_long_context, include_long_context_extreme
+                ),
             )
             return JSONResponse({"job_id": job_id, "status_url": f"/api/status/{job_id}"})
     elif _protocol_from_model(model) == "gemini":
@@ -450,10 +469,13 @@ async def api_detect_claude(
 
     await _preflight_or_422(request, base_url, api_key, model, "anthropic")
     job_id = await jobs.submit(
-        base_url, api_key, model, mode,
+        base_url, api_key, model,
         protocol="anthropic",
         include_long_context=include_long_context,
         include_long_context_extreme=include_long_context_extreme,
+        selected_probes=_legacy_probe_names(
+            "anthropic", model, include_long_context, include_long_context_extreme
+        ),
     )
     # NOTE: never echo api_key back in the response
     return JSONResponse({"job_id": job_id, "status_url": f"/api/status/{job_id}"})
@@ -465,14 +487,12 @@ async def api_detect_openai(
     base_url: str = Form(...),
     api_key: str = Form(...),
     model: str = Form(...),
-    mode: str = Form("standard"),
     include_long_context: bool = Form(False),
     include_long_context_extreme: bool = Form(False),
 ) -> JSONResponse:
     base_url = base_url.strip()
     api_key = api_key.strip()
     model = model.strip()
-    mode = mode.strip().lower()
 
     if not base_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="base_url must start with http(s)://")
@@ -480,15 +500,16 @@ async def api_detect_openai(
         raise HTTPException(status_code=400, detail="api_key looks invalid")
     if not model or len(model) > 200:
         raise HTTPException(status_code=400, detail="model must be 1–200 chars")
-    if mode not in _VALID_MODES:
-        raise HTTPException(status_code=400, detail=f"mode must be one of {_VALID_MODES}")
 
     await _preflight_or_422(request, base_url, api_key, model, "openai")
     job_id = await jobs.submit(
-        base_url, api_key, model, mode,
+        base_url, api_key, model,
         protocol="openai",
         include_long_context=include_long_context,
         include_long_context_extreme=include_long_context_extreme,
+        selected_probes=_legacy_probe_names(
+            "openai", model, include_long_context, include_long_context_extreme
+        ),
     )
     return JSONResponse({"job_id": job_id, "status_url": f"/api/status/{job_id}"})
 
@@ -499,12 +520,10 @@ async def api_detect_gemini(
     base_url: str = Form(...),
     api_key: str = Form(...),
     model: str = Form(...),
-    mode: str = Form("standard"),
 ) -> JSONResponse:
     base_url = base_url.strip()
     api_key = api_key.strip()
     model = model.strip()
-    mode = mode.strip().lower()
 
     if not base_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="base_url must start with http(s)://")
@@ -512,11 +531,13 @@ async def api_detect_gemini(
         raise HTTPException(status_code=400, detail="api_key looks invalid")
     if not model or len(model) > 200:
         raise HTTPException(status_code=400, detail="model must be 1–200 chars")
-    if mode not in _VALID_MODES:
-        raise HTTPException(status_code=400, detail=f"mode must be one of {_VALID_MODES}")
 
     await _preflight_or_422(request, base_url, api_key, model, "gemini")
-    job_id = await jobs.submit(base_url, api_key, model, mode, protocol="gemini")
+    job_id = await jobs.submit(
+        base_url, api_key, model,
+        protocol="gemini",
+        selected_probes=_legacy_probe_names("gemini", model),
+    )
     return JSONResponse({"job_id": job_id, "status_url": f"/api/status/{job_id}"})
 
 
@@ -531,7 +552,6 @@ async def api_status(job_id: str) -> JSONResponse:
         "status": j.status,
         "base_url": j.base_url,
         "target_model": j.target_model,
-        "mode": j.mode,
         "created_at": j.created_at,
         "started_at": j.started_at,
         "finished_at": j.finished_at,

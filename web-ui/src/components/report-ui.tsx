@@ -1,16 +1,9 @@
 import type {
-  DetectionMode,
   JobVerdict,
   ProbeResultStatus,
   ReportStatus,
   RiskLevel,
 } from "../api";
-
-export const MODE_LABEL: Record<DetectionMode, string> = {
-  quick: "快速",
-  standard: "标准",
-  full: "完整",
-};
 
 export const VERDICT_LABEL: Record<JobVerdict, string> = {
   passed: "通过",

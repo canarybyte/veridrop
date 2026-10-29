@@ -4,7 +4,6 @@ import { Link, useNavigate } from "react-router-dom";
 import type { Credential, JobVerdict, Protocol, ReportSummary } from "../api";
 import { listCredentials, listReports } from "../api";
 import {
-  MODE_LABEL,
   RiskChip,
   StatusChip,
   VerdictChip,
@@ -29,7 +28,7 @@ const EMPTY_FILTERS: Filters = {
   credential: "",
 };
 
-const COLUMN_COUNT = 10;
+const COLUMN_COUNT = 9;
 
 function scoreText(score: number | null): string {
   return score === null ? "—" : score.toFixed(1);
@@ -276,7 +275,6 @@ export default function ReportsPage() {
                   <th>中转站</th>
                   <th>凭据</th>
                   <th>模型</th>
-                  <th>模式</th>
                   <th>总分</th>
                   <th>结论</th>
                   <th>风险</th>
@@ -337,7 +335,6 @@ export default function ReportsPage() {
                   <th>中转站</th>
                   <th>凭据</th>
                   <th>模型</th>
-                  <th>模式</th>
                   <th>总分</th>
                   <th>结论</th>
                   <th>风险</th>
@@ -379,7 +376,6 @@ export default function ReportsPage() {
                     <td>
                       <span className="reports-model">{item.target_model}</span>
                     </td>
-                    <td>{MODE_LABEL[item.mode]}</td>
                     <td className="reports-num">{scoreText(item.total_score)}</td>
                     <td>
                       <VerdictChip verdict={item.verdict} />

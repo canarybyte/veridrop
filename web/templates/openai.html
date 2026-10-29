@@ -55,7 +55,7 @@
     {"@type": "HowToStep", "name": "打开检测页", "text": "访问 https://veridrop.org/openai"},
     {"@type": "HowToStep", "name": "填中转站地址", "text": "填 OpenAI-compatible base_url,例如 https://api.example.com 或 https://api.example.com/v1"},
     {"@type": "HowToStep", "name": "粘贴 API key", "text": "粘贴你的 sk-... key,只用于本次检测"},
-    {"@type": "HowToStep", "name": "选模型 + 模式", "text": "选 gpt-4o-mini / gpt-4o / gpt-5 等,standard 模式约 40 秒"},
+    {"@type": "HowToStep", "name": "选模型 + 探针", "text": "选 gpt-4o-mini / gpt-4o / gpt-5 等,手动勾选要运行的探针后开始检测"},
     {"@type": "HowToStep", "name": "开始检测", "text": "点开始检测,等 30-70 秒拿到报告"},
     {"@type": "HowToStep", "name": "看 usage 字段指纹", "text": "重点看 protocol detector 是否报 usage_contains_claude_fields / usage_source_non_openai 等 critical issue — 出现就基本说明中转站在转协议"}
   ]
@@ -109,14 +109,6 @@
             {% endfor %}
           </ul>
         </div>
-      </div>
-      <div class="field">
-        <label for="mode">检测深度</label>
-        <select id="mode" name="mode">
-          <option value="quick">快速 (~15 秒,3 项)</option>
-          <option value="standard" selected>标准 (~40 秒,6 项)</option>
-          <option value="full">完整 (~70 秒,全 6 项)</option>
-        </select>
       </div>
     </div>
 

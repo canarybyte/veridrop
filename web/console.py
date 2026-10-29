@@ -329,7 +329,7 @@ def _validate_name(value: str) -> str:
 
 
 class DetectRequest(BaseModel):
-    """前端提交检测的 JSON body（凭据引用 + 模型 + 模式）。
+    """前端提交检测的 JSON body（凭据引用 + 模型 + 探针选择）。
 
     base_url / api_key 已从请求体移除:检测对象只能是已保存的凭据,明文 key
     不再经过前端。
@@ -337,13 +337,12 @@ class DetectRequest(BaseModel):
 
     credential_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
-    mode: Literal["quick", "standard", "full"]
     include_long_context: bool = False
     include_long_context_extreme: bool = False
     # 深度诊断(13–25 项)手动开关,默认关闭。
     deep: bool = False
-    # 显式勾选的探针名;None 表示按 mode 默认选择,[] 由路由层拒绝。
-    probes: list[str] | None = None
+    # 用户手动勾选的探针名;缺失或空列表由路由层统一返回 422。
+    probes: list[str] = Field(default_factory=list)
 
     @field_validator("credential_id", "model")
     @classmethod
@@ -532,7 +531,7 @@ async def app_probes(
     protocol: Literal["anthropic", "openai", "gemini"] = Query(...),
     model: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    """探针目录:分类、可选探针、各 mode 的默认选择。"""
+    """探针目录:分类与探针清单(含 applies 适用标记)。"""
     try:
         return build_catalog(protocol, model or None)
     except ValueError as exc:
@@ -543,11 +542,9 @@ async def app_probes(
 
 
 def _validate_selected_probes(
-    probes: list[str] | None, protocol: str, model: str
-) -> list[str] | None:
-    """校验显式勾选的探针名;None 表示按 mode 默认,[] 直接拒绝。"""
-    if probes is None:
-        return None
+    probes: list[str], protocol: str, model: str
+) -> list[str]:
+    """校验用户勾选的探针名:至少一个,且必须是该协议目录内的已知探针。"""
     if not probes:
         raise HTTPException(status_code=422, detail="至少选择一个探针")
     known = {p["name"] for p in build_catalog(protocol, model)["probes"]}
@@ -582,7 +579,6 @@ async def app_detect(payload: DetectRequest) -> dict[str, str]:
         credential["base_url"],
         plain_key,
         payload.model,
-        payload.mode,
         protocol=protocol,
         include_long_context=payload.include_long_context,
         include_long_context_extreme=payload.include_long_context_extreme,
@@ -607,7 +603,6 @@ async def app_detect_status(job_id: str) -> dict[str, Any]:
         "protocol": job.protocol,
         "base_url": job.base_url,
         "target_model": job.target_model,
-        "mode": job.mode,
         # epoch 秒（float），与 Job 字段一致。
         "created_at": job.created_at,
         "started_at": job.started_at,
@@ -719,7 +714,6 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         "protocol",
         "base_url",
         "target_model",
-        "mode",
         "status",
         "api_key_masked",
         "total_score",
@@ -754,7 +748,6 @@ def _record_from_job(job: jobs.Job) -> dict[str, Any]:
         "base_url": base_url,
         "host": _host_from_url(base_url),
         "target_model": job.target_model or report.get("target_model") or "",
-        "mode": job.mode or report.get("mode") or "",
         "status": job.status,
         "api_key_masked": report.get("api_key_masked"),
         "total_score": report.get("total_score"),
@@ -1000,7 +993,6 @@ async def agent_report_analysis(report_id: str) -> dict[str, Any]:
             str(record.get("base_url") or "")
         ),
         "target_model": record.get("target_model"),
-        "mode": record.get("mode"),
         "status": record.get("status"),
         "created_at": record.get("created_at"),
         "score": {

@@ -89,30 +89,37 @@ export default function ConsolePage() {
               检测失败：{jobError}
             </div>
           ) : null}
-
-          <div className="panel-head">
-            <h2 className="panel-title">探针</h2>
-            <span className={`chip ${busy ? "chip-primary" : "chip-muted"}`}>
-              {progress.done}/{progress.total || "—"}
-            </span>
+          <div className="console-right-block">
+            <h2 className="panel-title">结论</h2>
+            <p className="panel-hint">综合评分、风险等级与关键证据。</p>
+            <ScorePanel
+              progress={progress}
+              probes={probes}
+              jobResult={jobResult}
+              status={status}
+            />
           </div>
-          <p className="panel-hint">
-            探针会并发执行，结果按完成顺序回填；被跳过的探针也会保留在列表中。
-          </p>
-
-          <ProbeGrid probes={probes} progress={progress} />
-          <EventLog events={events} />
+          <div className="console-right-block">
+            <h2 className="panel-title">运行日志</h2>
+            <EventLog events={events} />
+          </div>
+          <div className="console-right-block">
+            <div className="panel-head">
+              <h2 className="panel-title">探针</h2>
+              <span className={`chip ${busy ? "chip-primary" : "chip-muted"}`}>
+                {progress.done}/{progress.total || "—"}
+              </span>
+            </div>
+            <p className="panel-hint">
+              探针会并发执行，结果按完成顺序回填；被跳过的探针也会保留在列表中。
+            </p>
+            <ProbeGrid probes={probes} progress={progress} />
+          </div>
         </section>
 
         <aside className="panel console-col-right">
-          <h2 className="panel-title">结论</h2>
-          <p className="panel-hint">综合评分、风险等级与关键证据。</p>
-          <ScorePanel
-            progress={progress}
-            probes={probes}
-            jobResult={jobResult}
-            status={status}
-          />
+          {/* 探针选择器由 ConfigForm 通过 portal 渲染进这个挂载点。 */}
+          <div className="console-right-block" id="probe-picker-slot" />
         </aside>
       </div>
 

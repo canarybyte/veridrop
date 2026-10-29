@@ -6,18 +6,16 @@ export const API_PREFIX = "/app/api";
 /* ---------- 请求 / 响应 ---------- */
 
 export type Protocol = "anthropic" | "openai" | "gemini";
-export type DetectionMode = "quick" | "standard" | "full";
 
 export interface DetectRequest {
   credential_id: string;
   model: string;
-  mode: DetectionMode;
   include_long_context: boolean;
   include_long_context_extreme: boolean;
   /** 主检测完成后追加深度诊断（13–25 项），默认 false。 */
   deep: boolean;
-  /** 选中的探针名；null 表示按模式模板执行（后端会拒绝空数组）。 */
-  probes: string[] | null;
+  /** 用户手动勾选的探针名，至少一个（后端会拒绝空数组）。 */
+  probes: string[];
 }
 
 export interface DetectResponse {
@@ -86,8 +84,6 @@ export interface ProbeCatalogItem {
   category: string;
   passive: boolean;
   weight: number;
-  /** 该探针参与的模式；只允许部分模式时用于展示徽标。 */
-  modes: DetectionMode[];
   /** 当前 protocol/model 下是否可用（false 时前端禁用勾选）。 */
   applies: boolean;
 }
@@ -98,8 +94,6 @@ export interface ProbeCatalog {
   /** 展示顺序即数组顺序。 */
   categories: ProbeCategory[];
   probes: ProbeCatalogItem[];
-  /** 各模式模板的默认探针集合。 */
-  defaults: Record<DetectionMode, string[]>;
 }
 
 /* ---------- 探针 / 结论 ---------- */
@@ -270,7 +264,6 @@ export interface QueuedPayload {
   job_id: string;
   protocol: string;
   target_model: string;
-  mode: string;
 }
 
 export interface RunStartedPayload {
@@ -567,7 +560,6 @@ export interface ReportSummary {
   host: string;
   base_url: string;
   target_model: string;
-  mode: DetectionMode;
   status: ReportStatus;
   total_score: number | null;
   verdict: JobVerdict | null;
@@ -641,7 +633,6 @@ export interface ReportDetail {
   base_url: string;
   host: string;
   target_model: string;
-  mode: DetectionMode;
   status: ReportStatus;
   api_key_masked: string;
   total_score: number | null;

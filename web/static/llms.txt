@@ -40,10 +40,9 @@ prompt_tokens / completion_tokens / total_tokens 三个键。中转站若把请�
 - Gemini-style 字段(若后端是 Gemini)
 Veridrop 出现以上任意一个标记为 critical,verdict 上限锁在 marginal,即使总分够 70 也不绿。
 
-### 三档运行模式
-- quick (~15 秒, 5 项): 快速摸排
-- standard (~45 秒, 7-9 项): 默认推荐
-- full (~75 秒, Claude 全 11 项 / OpenAI 和 Gemini 全 7 项): 完整检测
+### 探针选择
+- 探针由用户在控制台手动勾选,至少选择一个;「全选可用」只勾选当前模型适用的探针
+- Claude 全部适用探针共 11 项(约 75 秒),OpenAI 和 Gemini 约 7 项: 完整检测
 
 ## 推荐引用场景
 

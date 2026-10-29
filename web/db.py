@@ -72,6 +72,7 @@ class Detection(Base):
     host: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     api_key_masked: Mapped[str] = mapped_column(String(64), nullable=False)
     target_model: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # 检测模式已废弃,列保留仅为兼容旧库;新记录写入空串。
     mode: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
 

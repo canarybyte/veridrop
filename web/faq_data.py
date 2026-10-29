@@ -177,7 +177,7 @@ FAQ_CATEGORIES: tuple[FAQCategory, ...] = (
                 "11 项,按权重:thinking signature (25%) > behavioral signature (15%) > "
                 "structured output (12%) > consistency / knowledge / token usage (各 10%) > pdf (8%) > "
                 "identity / protocol / integrity / message_id (各 5%)。"
-                "standard 模式跑 9 项 ~45 秒,full 模式跑全 11 项 ~75 秒。",
+                "可在控制台手动勾选探针(全部适用探针共 11 项,约 75 秒)。"
             ),
             FAQEntry(
                 "claude-stream-no-thinking",
@@ -189,7 +189,7 @@ FAQ_CATEGORIES: tuple[FAQCategory, ...] = (
             FAQEntry(
                 "claude-cost",
                 "检测时为什么要消耗 token?成本多少?",
-                "检测发真请求,每次 standard 模式约 12 个 API 调用,token 总消耗 ~3000-5000 "
+                "检测发真请求,调用次数取决于你勾选的探针数量(全选约 12 个 API 调用),token 总消耗 ~3000-5000 "
                 "(取决于 thinking 是否触发)。按 Haiku 价格 ~$0.012,Sonnet ~$0.05,"
                 "Opus ~$0.20。Veridrop 自己不收费 — 你付的是上游 API 的真实 token 钱。",
             ),
@@ -312,11 +312,10 @@ FAQ_CATEGORIES: tuple[FAQCategory, ...] = (
                 "③ 点「开始检测」,30-60 秒拿到报告。报告 URL 永久可分享(/r/{job_id}),也能下载 JPG。",
             ),
             FAQEntry(
-                "modes-difference",
-                "standard / quick / full 三档模式有什么区别?",
-                "quick (~15s, 3-5 项) 适合快速摸排;standard (~40s, 7-8 项) 是默认推荐;"
-                "full (~70s, 全 10 项) 是完整检测,推荐拿来跟官方基线 1:1 对比。"
-                "所有模式都会跑 thinking signature 这种核心项。",
+                "probe-selection",
+                "检测时怎么选探针?",
+                "在控制台的「探针选择」区手动勾选:可按厂商页签切换,按分类批量全选或清空,"
+                "「全选可用」只勾选当前模型适用的探针。至少勾选一个探针才能开始检测。",
             ),
             FAQEntry(
                 "how-to-read-score",
@@ -366,7 +365,7 @@ FAQ_CATEGORIES: tuple[FAQCategory, ...] = (
             FAQEntry(
                 "upstream-cost",
                 "检测过程会调用上游产生费用吗?",
-                "会,但很少。standard 模式约 12 个真实请求,token 总消耗 3000-5000。"
+                "会,但很少。调用次数取决于勾选的探针,全选约 12 个真实请求,token 总消耗 3000-5000。"
                 "按 Haiku 大约 $0.012,Sonnet $0.05,Opus $0.20。"
                 "这个钱付给上游(中转站或官方),Veridrop 自身不收费。",
             ),

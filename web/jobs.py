@@ -66,6 +66,12 @@ _MAX_EXCHANGES = 500
 # 深度诊断的整体墙钟上限:上游不可达时客户端自身重试可能拖很久,
 # 超过该值直接判深测失败,绝不让一次作业无限挂起。
 _DEEP_TIMEOUT_S = 300.0
+# 单次检测的墙钟预算(秒)。探针由用户手动选择,不再按档位决定时长,取原「完整」
+# 档的 180s 作为上限,保证任意勾选组合都有足够时间。
+_OVERALL_TIMEOUT_S = 180.0
+# 核心 DetectionReport 的 mode 为必填字段;Web 层不再依据它选探针,仅用此固定值
+# 占位,且不会作为 Web 接口或数据库字段输出。
+_CORE_REPORT_MODE = Mode.FULL
 
 
 @dataclass
@@ -75,7 +81,6 @@ class Job:
     status: JobStatus = "queued"
     base_url: str = ""
     target_model: str = ""
-    mode: str = "full"
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
@@ -89,7 +94,7 @@ class Job:
     deep: bool = False
     deep_status: str | None = None
     deep_report: dict[str, Any] | None = None
-    # 用户显式勾选的探针名;None 表示按 mode 默认选择。
+    # 用户手动勾选的探针名(磁盘回落的旧 job 为 None)。
     selected_probes: list[str] | None = None
 
 
@@ -107,7 +112,6 @@ async def submit(
     base_url: str,
     api_key: str,
     model: str,
-    mode: str,
     protocol: str = "anthropic",
     include_long_context: bool = False,
     include_long_context_extreme: bool = False,
@@ -115,7 +119,7 @@ async def submit(
     credential_id: str | None = None,
     credential_name: str | None = None,
     deep: bool = False,
-    selected_probes: list[str] | None = None,
+    selected_probes: list[str],
 ) -> str:
     """Queue a detection job and return the job id immediately.
 
@@ -138,12 +142,11 @@ async def submit(
         protocol=protocol,
         base_url=base_url,
         target_model=model,
-        mode=mode,
         credential_id=credential_id,
         credential_name=credential_name,
         deep=deep,
         deep_status="running" if deep else "skipped",
-        selected_probes=(list(selected_probes) if selected_probes else None),
+        selected_probes=list(selected_probes),
     )
     async with _LOCK:
         _JOBS[job_id] = job
@@ -156,16 +159,15 @@ async def submit(
             "job_id": job_id,
             "protocol": protocol,
             "target_model": model,
-            "mode": mode,
             "deep": deep,
         },
     )
     asyncio.create_task(
         _run(
-            job_id, base_url, api_key, model, mode, protocol,
+            job_id, base_url, api_key, model, protocol,
             include_long_context, include_long_context_extreme,
             credential_id, credential_name, deep,
-            list(selected_probes) if selected_probes else None,
+            list(selected_probes),
         )
     )
     return job_id
@@ -194,7 +196,6 @@ async def get(job_id: str) -> Job | None:
         protocol=report.get("protocol", "anthropic"),
         base_url=report.get("base_url", ""),
         target_model=report.get("target_model", ""),
-        mode=report.get("mode", "full"),
         created_at=time.time(),
         finished_at=time.time(),
         report=report,
@@ -227,14 +228,13 @@ async def _run(
     base_url: str,
     api_key: str,
     model: str,
-    mode: str,
     protocol: str,
-    include_long_context: bool = False,
-    include_long_context_extreme: bool = False,
-    credential_id: str | None = None,
-    credential_name: str | None = None,
-    deep: bool = False,
-    selected_probes: list[str] | None = None,
+    include_long_context: bool,
+    include_long_context_extreme: bool,
+    credential_id: str | None,
+    credential_name: str | None,
+    deep: bool,
+    selected_probes: list[str],
 ) -> None:
     async with _SEMA:
         async with _LOCK:
@@ -262,18 +262,18 @@ async def _run(
         token = trace.set_collector(_collect_exchange)
 
         try:
-            cfg = ExecutionConfig.for_mode(Mode(mode), max_concurrent=3)
+            cfg = ExecutionConfig(
+                max_concurrent=3, overall_timeout_s=_OVERALL_TIMEOUT_S
+            )
             cfg.include_long_context = include_long_context
             cfg.include_long_context_extreme = include_long_context_extreme
             # 显式勾选了长上下文探针时,自动打开 include_long_context:用户
             # 勾选即视为授权这次昂贵探测,不再要求额外勾复选框。
-            selects_long_context = bool(
-                selected_probes and "long_context" in selected_probes
-            )
+            selects_long_context = "long_context" in selected_probes
             if selects_long_context:
                 cfg.include_long_context = True
-            # Long-context probes blow past the regular per-mode wall-clock
-            # budget (60–180s). 1M-token requests alone take 2–4 minutes
+            # Long-context probes blow past the regular wall-clock budget
+            # (60–180s). 1M-token requests alone take 2–4 minutes
             # upstream; the extreme path may also sleep 75s per tier waiting
             # for an OpenAI/Anthropic TPM window to reset before retrying
             # rate-limited probes (see _probe_tier_with_tpm_retry).
@@ -283,8 +283,8 @@ async def _run(
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 900.0)
             elif include_long_context:
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 300.0)
-            # 显式勾选时忽略 mode 集合,只跑用户选中的探针。
-            only = set(selected_probes) if selected_probes else None
+            # 只跑用户手动勾选的探针。
+            only = set(selected_probes)
             if protocol == "openai":
                 outcome = await _run_openai(
                     base_url, api_key, model, cfg, on_event=on_event, only=only
@@ -342,20 +342,8 @@ async def _run(
                     brands = [x for x in b if isinstance(x, str)]
                 break
 
-            # 报告记录本次参与的探针:显式勾选取用户所选(排序);否则取
-            # Runner 实际选中的探针(即未被 mode/model 排除的那些)。
-            if selected_probes:
-                report_selected = sorted(set(selected_probes))
-            else:
-                report_selected = sorted(
-                    r.name
-                    for r in outcome.results
-                    if not (
-                        r.status == "skip"
-                        and r.details.get("skip_reason")
-                        in ("mode-excluded", "model-excluded")
-                    )
-                )
+            # 报告记录本次手动勾选的探针(排序去重)。
+            report_selected = sorted(set(selected_probes))
 
             report = DetectionReport(
                 protocol=report_protocol,
@@ -365,7 +353,7 @@ async def _run(
                 base_url=base_url,
                 api_key_masked=mask_api_key(api_key),
                 target_model=model,
-                mode=Mode(mode),
+                mode=_CORE_REPORT_MODE,
                 timestamp=datetime.now(timezone.utc),
                 total_score=score,
                 verdict=verdict,
@@ -532,7 +520,6 @@ async def _run(
                 protocol=protocol,
                 base_url=base_url,
                 target_model=model,
-                mode=mode,
                 # 只落掩码：报告里已经算好，原始 key 绝不进入持久化路径。
                 api_key_masked=report_dict["api_key_masked"],
                 status="done",
@@ -568,7 +555,6 @@ async def _run(
                 protocol=protocol,
                 base_url=base_url,
                 target_model=model,
-                mode=mode,
                 # 失败分支没有 report，在调用点现算掩码，原始 key 不离开内存。
                 api_key_masked=mask_api_key(api_key),
                 status="error",
@@ -612,7 +598,6 @@ async def _persist(
     protocol: str,
     base_url: str,
     target_model: str,
-    mode: str,
     api_key_masked: str,
     status: str,
     created_at: float,
@@ -640,7 +625,6 @@ async def _persist(
             protocol=protocol,
             base_url=base_url,
             target_model=target_model,
-            mode=mode,
             api_key_masked=api_key_masked,
             status=status,
             created_at=_utc(created_at),
@@ -689,7 +673,7 @@ async def _run_anthropic(
     )
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
-        runner = build_runner(client, build_detectors(cfg.mode), cfg)
+        runner = build_runner(client, build_detectors(), cfg)
         return await runner.run(model, on_event=on_event, only=only)
 
 
@@ -709,7 +693,7 @@ async def _run_openai(
     )
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
-        runner = build_runner(client, build_detectors(cfg.mode), cfg)
+        runner = build_runner(client, build_detectors(), cfg)
         return await runner.run(model, on_event=on_event, only=only)
 
 
@@ -729,5 +713,5 @@ async def _run_gemini(
     )
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
-        runner = build_runner(client, build_detectors(cfg.mode), cfg)
+        runner = build_runner(client, build_detectors(), cfg)
         return await runner.run(model, on_event=on_event, only=only)

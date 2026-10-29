@@ -1,23 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type {
-  DetectionMode,
-  ProbeCatalog,
-  ProbeCatalogItem,
-  Protocol,
-} from "../api";
+import type { ProbeCatalog, ProbeCatalogItem, Protocol } from "../api";
 import { getProbeCatalog } from "../api";
-
-const MODE_LABELS: Record<DetectionMode, string> = {
-  quick: "快速",
-  standard: "标准",
-  full: "完整",
-};
 
 /** model 变化只会影响 applies，稍作防抖避免连续请求。 */
 const FETCH_DEBOUNCE_MS = 300;
 
 const OTHER_GROUP_ID = "__other";
+
+/** 三厂商页签：协议 id 与展示名。 */
+const VENDOR_TABS: ReadonlyArray<{ id: Protocol; label: string }> = [
+  { id: "anthropic", label: "Claude" },
+  { id: "openai", label: "GPT" },
+  { id: "gemini", label: "Gemini" },
+];
 
 interface ProbeGroup {
   id: string;
@@ -31,18 +27,11 @@ function formatWeight(weight: number): string {
   return String(Math.round(weight * 100) / 100);
 }
 
-/** 只覆盖部分模式时才展示徽标；覆盖全部模式视为默认可用，不额外占位。 */
-function partialModes(modes: DetectionMode[]): string | null {
-  if (!Array.isArray(modes) || modes.length === 0 || modes.length >= 3) return null;
-  return modes.map((item) => MODE_LABELS[item] ?? item).join(" · ");
-}
-
 export interface ProbePickerProps {
   protocol: Protocol;
   model: string;
-  mode: DetectionMode;
-  /** null 表示跟随模式模板；数组表示用户显式选择。 */
-  value: string[] | null;
+  /** 用户手动勾选的探针名集合。 */
+  value: string[];
   onChange: (next: string[]) => void;
   disabled?: boolean;
 }
@@ -50,11 +39,19 @@ export interface ProbePickerProps {
 export function ProbePicker({
   protocol,
   model,
-  mode,
   value,
   onChange,
-  disabled = false,
+  disabled: disabledProp = false,
 }: ProbePickerProps) {
+  // 当前页签的厂商；默认跟随模型所属厂商。
+  const [vendor, setVendor] = useState<Protocol>(protocol);
+  useEffect(() => {
+    setVendor(protocol);
+  }, [protocol]);
+  // 非当前模型厂商的页签只读预览，不能勾选。
+  const isActiveVendor = vendor === protocol;
+  const disabled = disabledProp || !isActiveVendor;
+
   const [catalog, setCatalog] = useState<ProbeCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +68,8 @@ export function ProbePicker({
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError(null);
-      getProbeCatalog(protocol, model.trim() || undefined)
+      // 只有当前厂商页签才带模型，用于计算 applies；其他页签仅预览目录。
+      getProbeCatalog(vendor, vendor === protocol ? model.trim() || undefined : undefined)
         .then((data) => {
           if (requestRef.current !== seq) return;
           setCatalog(data);
@@ -87,10 +85,10 @@ export function ProbePicker({
     }, FETCH_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [protocol, model, retryNonce]);
+  }, [vendor, protocol, model, retryNonce]);
 
-  // 未自定义时直接展示当前模式模板，切换模式会自动跟随。
-  const selectedNames = value ?? (catalog ? catalog.defaults[mode] ?? [] : []);
+  // 非当前厂商页签不展示选中态，避免同名探针（如 protocol）造成误解。
+  const selectedNames = !isActiveVendor ? [] : value;
   const selectedSet = useMemo(() => new Set(selectedNames), [selectedNames]);
 
   const total = catalog?.probes.length ?? 0;
@@ -150,11 +148,6 @@ export function ProbePicker({
     applySelection(next);
   };
 
-  const applyTemplate = () => {
-    if (!catalog) return;
-    onChange([...(catalog.defaults[mode] ?? [])]);
-  };
-
   const selectAllAvailable = () => {
     if (!catalog) return;
     applySelection(new Set(catalog.probes.filter((item) => item.applies).map((item) => item.name)));
@@ -205,15 +198,33 @@ export function ProbePicker({
 
       {expanded ? (
         <>
+          <div className="probe-vendor-tabs" role="tablist" aria-label="厂商">
+            {VENDOR_TABS.map((tab) => {
+              const active = tab.id === vendor;
+              const current = tab.id === protocol;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  className={`probe-vendor-tab${active ? " is-active" : ""}`}
+                  onClick={() => setVendor(tab.id)}
+                >
+                  {tab.label}
+                  {current ? <span className="probe-vendor-badge">当前模型</span> : null}
+                </button>
+              );
+            })}
+          </div>
+
+          {!isActiveVendor ? (
+            <p className="probe-picker-note">
+              {`这是 ${VENDOR_TABS.find((tab) => tab.id === vendor)?.label ?? vendor} 的探针预览，切换到对应厂商的模型后才会参与检测。`}
+            </p>
+          ) : null}
+
           <div className="probe-picker-toolbar">
-            <button
-              type="button"
-              className="probe-picker-btn probe-picker-btn-primary"
-              disabled={disabled || !catalog}
-              onClick={applyTemplate}
-            >
-              按 {mode} 模板
-            </button>
             <button
               type="button"
               className="probe-picker-btn"
@@ -301,7 +312,6 @@ export function ProbePicker({
 
                         {group.items.map((item) => {
                           const checked = selectedSet.has(item.name);
-                          const modesText = partialModes(item.modes);
                           return (
                             <label
                               key={item.name}
@@ -332,16 +342,11 @@ export function ProbePicker({
                                     {item.description}
                                   </span>
                                 ) : null}
-                                {item.passive || modesText || !item.applies ? (
+                                {item.passive || !item.applies ? (
                                   <span className="probe-picker-item-tags">
                                     {item.passive ? (
                                       <span className="probe-picker-tag probe-picker-tag-passive">
                                         被动
-                                      </span>
-                                    ) : null}
-                                    {modesText ? (
-                                      <span className="probe-picker-tag">
-                                        {`仅 ${modesText}`}
                                       </span>
                                     ) : null}
                                     {!item.applies ? (
@@ -373,9 +378,7 @@ export function ProbePicker({
         </>
       ) : (
         <span className="field-hint">
-          {value === null
-            ? `当前按 ${MODE_LABELS[mode]} 模式模板执行，展开可自定义探针。`
-            : `当前为自定义探针（${selectedCount} 项），展开可修改。`}
+          {`当前已选 ${selectedCount} 项，展开可修改。`}
         </span>
       )}
     </div>

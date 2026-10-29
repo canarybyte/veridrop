@@ -359,11 +359,10 @@ def render_report_jpg(report: dict[str, Any]) -> bytes:
     circle_r = 175
     _draw_circle_score(d, circle_cx, circle_cy, circle_r, score, caption, ring)
 
-    # model + mode line under the circle
+    # model line under the circle
     sub_font = _load_font(16)
     model_label = report.get("target_model", "")
-    mode_label = report.get("mode", "")
-    sub_text = f"{model_label}  ·  mode={mode_label}"
+    sub_text = model_label
     sb = d.textbbox((0, 0), sub_text, font=sub_font)
     sw = sb[2] - sb[0]
     d.text(

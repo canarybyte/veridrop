@@ -39,8 +39,8 @@
   "mainEntity": [
     {"@type":"Question","name":"Claude API 中转站怎么验证真假?","acceptedAnswer":{"@type":"Answer","text":"用 thinking signature 加密级验证 — Claude 启用扩展思考时返回 500-2000 字符的服务端加密签名,中转站理论上无法伪造。Veridrop 把这个作为 25% 权重的核心检测项,任何中转站若返回不出这个签名(或长度异常),即可判定为非真品 Claude。"}},
     {"@type":"Question","name":"Kiro / Amazon Q / Bedrock 假冒 Claude 怎么识破?","acceptedAnswer":{"@type":"Answer","text":"Kiro / Amazon Q / Bedrock 是 Amazon 的 Claude 替身网关,响应没有 Claude thinking signature(它们走的是 AWS Bedrock 的简化接口,不返回服务端签名)。Veridrop 在 thinking_signature 检测上会直接判 0 分,fail 整体检测。"}},
-    {"@type":"Question","name":"Veridrop 的 Claude 检测覆盖哪些维度?","acceptedAnswer":{"@type":"Answer","text":"11 项,按权重:thinking signature (25%) > behavioral signature (15%) > structured output (12%) > consistency / knowledge / token usage (各 10%) > pdf (8%) > identity / protocol / integrity / message_id (各 5%)。standard 模式跑 9 项约 45 秒,full 模式跑全 11 项约 75 秒。"}},
-    {"@type":"Question","name":"检测会不会消耗我的 API 余额?","acceptedAnswer":{"@type":"Answer","text":"会,但成本极低。完整模式约发 16 个请求,Haiku 约 0.012 美元量级,Sonnet / Opus 更高。费用从你的 API key 对应中转站账户扣,Veridrop 自身不收费。"}},
+    {"@type":"Question","name":"Veridrop 的 Claude 检测覆盖哪些维度?","acceptedAnswer":{"@type":"Answer","text":"11 项,按权重:thinking signature (25%) > behavioral signature (15%) > structured output (12%) > consistency / knowledge / token usage (各 10%) > pdf (8%) > identity / protocol / integrity / message_id (各 5%)。可在控制台手动勾选探针,全部适用探针共 11 项约 75 秒。"}},
+    {"@type":"Question","name":"检测会不会消耗我的 API 余额?","acceptedAnswer":{"@type":"Answer","text":"会,但成本极低。全部适用探针约发 16 个请求,Haiku 约 0.012 美元量级,Sonnet / Opus 更高。费用从你的 API key 对应中转站账户扣,Veridrop 自身不收费。"}},
     {"@type":"Question","name":"Veridrop 会偷我的 API key 吗?","acceptedAnswer":{"@type":"Answer","text":"不会。API key 只存在 job 内存对象里,job 跑完(成功或失败)立即清空,不写报告 JSON、不写日志、不写磁盘。报告里 key 是脱敏形式 (sk-y7xU••••••0h)。代码完全开源可验证,也可以自己 clone 部署。"}},
     {"@type":"Question","name":"支持哪些 Claude 模型?","acceptedAnswer":{"@type":"Answer","text":"Claude Opus 4.7、Sonnet 4.6、Haiku 4.5、Opus 4.6、Sonnet 4.5、Opus 4.5、Opus 4.1。检测器自动适配各模型的 thinking 模式(extended vs adaptive)和 PDF 页数上限。"}}
   ]
@@ -57,7 +57,7 @@
     {"@type": "HowToStep", "name": "打开检测页", "text": "访问 https://veridrop.org/claude"},
     {"@type": "HowToStep", "name": "填中转站地址", "text": "在 base_url 输入框填中转站根 URL,例如 https://api.example.com"},
     {"@type": "HowToStep", "name": "粘贴 API key", "text": "在 API 密钥框粘贴你的 sk-... key,只用于本次检测,不会被记录"},
-    {"@type": "HowToStep", "name": "选模型 + 模式", "text": "下拉自动列出该 key 在该中转站可用的模型,选 standard 模式覆盖 9 项检测约 45 秒"},
+    {"@type": "HowToStep", "name": "选模型 + 探针", "text": "下拉自动列出该 key 在该中转站可用的模型,手动勾选要运行的探针后开始检测"},
     {"@type": "HowToStep", "name": "开始检测", "text": "点开始检测,等 30-75 秒拿到报告"},
     {"@type": "HowToStep", "name": "看 thinking signature", "text": "重点看 thinking_signature 一项是否拿到 100 分 — 这是最强的真伪指标。0 分基本可判定为非真品 Claude"}
   ]
@@ -106,14 +106,6 @@
           </ul>
         </div>
         <p class="hint">点击/聚焦可见预设模型;若中转站用 <code>claude-opus-4-7-thinking</code> 等自定义名,直接输入即可。</p>
-      </div>
-      <div class="field">
-        <label for="mode">检测深度</label>
-        <select id="mode" name="mode">
-          <option value="quick">快速 (~15 秒,5 项核心)</option>
-          <option value="standard">标准 (~45 秒,9 项)</option>
-          <option value="full" selected>完整 (~75 秒,全 11 项,推荐)</option>
-        </select>
       </div>
     </div>
 
@@ -209,7 +201,7 @@
         便宜的中转站多半有水分,看分数比看价格重要。
       </p>
       <p data-mode="developer">
-        关键看 4 点:① 跑 Veridrop full 模式看 thinking signature 是否拿到 100 分;
+        关键看 4 点:① 跑 Veridrop 全部适用探针看 thinking signature 是否拿到 100 分;
         ② 看 usage 字段有没有 <code>claude_*</code> 之外的异源痕迹
         (e.g. <code>usage_source: anthropic</code> 出现在 OpenAI 响应里说明被中转套壳);
         ③ 看 stream / non-stream 在同一 prompt 上的 input_tokens / output_tokens 差是否 ≤ 5%;

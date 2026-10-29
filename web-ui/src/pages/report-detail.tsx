@@ -13,7 +13,6 @@ import { getReport, listReportExchanges } from "../api";
 import { DeepPanel } from "../components/deep-panel";
 import { ExchangeDrawer } from "../components/exchange-viewer";
 import {
-  MODE_LABEL,
   ProbeStatusChip,
   RiskChip,
   StatusChip,
@@ -272,8 +271,7 @@ export default function ReportDetailPage() {
       <div className="page-header">
         <div>
           <h1 className="page-title">
-            {detail.host} · {detail.target_model} ·{" "}
-            {MODE_LABEL[detail.mode] ?? detail.mode}
+            {detail.host} · {detail.target_model}
           </h1>
           <p className="page-subtitle">
             协议 <code className="code">{detail.protocol}</code> · 报告 ID{" "}

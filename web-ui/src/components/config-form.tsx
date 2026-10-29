@@ -1,24 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 
-import type { Credential, DetectionMode } from "../api";
+import type { Credential } from "../api";
 import { listCredentials, submitDetection } from "../api";
 import { CredentialForm } from "./credential-form";
 import { ModelPicker, guessProtocol } from "./model-picker";
 import { ProbePicker } from "./probe-picker";
-
-interface ModeOption {
-  value: DetectionMode;
-  label: string;
-  desc: string;
-}
-
-const MODES: ModeOption[] = [
-  { value: "quick", label: "快速", desc: "只跑核心探针，几十秒出结论。" },
-  { value: "standard", label: "标准", desc: "覆盖主要探针，兼顾耗时与可信度。" },
-  { value: "full", label: "完整", desc: "全量探针，含长上下文等重型检测。" },
-];
 
 export interface ConfigFormProps {
   busy: boolean;
@@ -32,28 +21,33 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
   const [selectedId, setSelectedId] = useState("");
   const [showCredentialForm, setShowCredentialForm] = useState(false);
   const [model, setModel] = useState("");
-  const [mode, setMode] = useState<DetectionMode>("standard");
-  const [selectedProbes, setSelectedProbes] = useState<string[] | null>(null);
+  const [selectedProbes, setSelectedProbes] = useState<string[]>([]);
   const [includeLongContext, setIncludeLongContext] = useState(false);
   const [includeExtreme, setIncludeExtreme] = useState(false);
   const [deepEnabled, setDeepEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 探针选择器通过 portal 渲染到右栏挂载点（console 页的 #probe-picker-slot），
+  // 选择状态仍保留在本表单里，避免把 model/探针 一路提升到页面级。
+  const [pickerSlot, setPickerSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPickerSlot(document.getElementById("probe-picker-slot"));
+  }, []);
+
   const pending = busy || submitting;
   const selectedCredential = credentials.find((item) => item.id === selectedId) ?? null;
-  const activeMode = MODES.find((item) => item.value === mode) ?? MODES[1];
   const trimmedModel = model.trim();
   const protocol = guessProtocol(trimmedModel);
   const canStart = Boolean(selectedId) && Boolean(trimmedModel);
-  const longContextProbeSelected = selectedProbes?.includes("long_context") ?? false;
+  const longContextProbeSelected = selectedProbes.includes("long_context");
 
-  // 探针集合随协议变化，切到其他协议时自定义选择失效，回到“按模式模板”。
+  // 探针集合随协议变化，切到其他协议时清空已选探针，要求重新勾选。
   const previousProtocol = useRef(protocol);
   useEffect(() => {
     if (previousProtocol.current === protocol) return;
     previousProtocol.current = protocol;
-    setSelectedProbes(null);
+    setSelectedProbes([]);
   }, [protocol]);
 
   // 显式选中 long_context 时自动打开长上下文开关；用户仍可手动关闭。
@@ -109,8 +103,8 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
       setError("请选择或手动填写模型。");
       return;
     }
-    if (selectedProbes !== null && selectedProbes.length === 0) {
-      setError("至少选择一个探针。");
+    if (selectedProbes.length === 0) {
+      setError("请至少选择一个探针。");
       return;
     }
 
@@ -120,7 +114,6 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
       const response = await submitDetection({
         credential_id: selectedId,
         model: trimmedModel,
-        mode,
         include_long_context: includeLongContext,
         include_long_context_extreme: includeExtreme,
         deep: deepEnabled,
@@ -235,33 +228,18 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
         </div>
       )}
 
-      <div className="field">
-        <span className="field-label">检测模式</span>
-        <div className="seg" role="group" aria-label="选择检测模式">
-          {MODES.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              className={`seg-btn${item.value === mode ? " is-active" : ""}`}
-              aria-pressed={item.value === mode}
+      {pickerSlot
+        ? createPortal(
+            <ProbePicker
+              protocol={protocol}
+              model={trimmedModel}
+              value={selectedProbes}
+              onChange={setSelectedProbes}
               disabled={pending}
-              onClick={() => setMode(item.value)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <span className="field-hint">{activeMode.desc}</span>
-      </div>
-
-      <ProbePicker
-        protocol={protocol}
-        model={trimmedModel}
-        mode={mode}
-        value={selectedProbes}
-        onChange={setSelectedProbes}
-        disabled={pending}
-      />
+            />,
+            pickerSlot
+          )
+        : null}
 
       <div className="field">
         <span className="field-label">扩展检测</span>

@@ -57,7 +57,7 @@
     {"@type": "HowToStep", "name": "打开检测页", "text": "访问 https://veridrop.org/gemini"},
     {"@type": "HowToStep", "name": "填中转站地址", "text": "Google 官方填 https://generativelanguage.googleapis.com/v1beta/openai;第三方中转站通常填 https://api.example.com/v1"},
     {"@type": "HowToStep", "name": "粘贴 API key", "text": "Google 官方用 AIza... key,第三方中转站用 sk-... key"},
-    {"@type": "HowToStep", "name": "选模型 + 模式", "text": "推荐 gemini-2.5-flash 或 gemini-3-flash-preview,standard 模式约 40 秒"},
+    {"@type": "HowToStep", "name": "选模型 + 探针", "text": "推荐 gemini-2.5-flash 或 gemini-3-flash-preview,手动勾选要运行的探针后开始检测"},
     {"@type": "HowToStep", "name": "开始检测", "text": "点开始检测,等 30-70 秒拿到报告"},
     {"@type": "HowToStep", "name": "对比 Google 官方基线", "text": "建议先测一次 Google 官方端点作为 100 分基线,再去对比第三方中转站的差距"}
   ]
@@ -114,14 +114,6 @@
             {% endfor %}
           </ul>
         </div>
-      </div>
-      <div class="field">
-        <label for="mode">检测深度</label>
-        <select id="mode" name="mode">
-          <option value="quick">快速 (~15 秒,3 项)</option>
-          <option value="standard" selected>标准 (~45 秒,7 项)</option>
-          <option value="full">完整 (~70 秒,全 7 项)</option>
-        </select>
       </div>
     </div>
 

@@ -234,7 +234,7 @@ code,
 
 .console-layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 340px;
+  grid-template-columns: 320px minmax(0, 1fr) 400px;
   gap: 18px;
   align-items: start;
 }
@@ -243,6 +243,18 @@ code,
 .console-col-center,
 .console-col-right {
   min-width: 0;
+}
+
+/* 右栏纵向分块：结论 / 探针选择 / 探针，块间用分隔线区隔。 */
+.console-right-block + .console-right-block {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* 中栏只承载运行日志，给个最小高度避免塌成一条。 */
+.console-col-center {
+  min-height: 260px;
 }
 
 @media (max-width: 1199px) {
@@ -2307,14 +2319,11 @@ code,
 }
 
 /* 长列表内部滚动，避免把整页撑高 */
+/* 分类纵向排列、留足间距；每个分类自带下拉滚动条，互不挤压 */
 .probe-picker-scroll {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 380px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 2px;
+  gap: 12px;
 }
 
 .probe-group {
@@ -2378,6 +2387,9 @@ code,
   gap: 4px;
   padding: 6px 8px 8px;
   border-top: 1px solid var(--border);
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .probe-group-actions {
@@ -2522,9 +2534,58 @@ code,
   color: var(--text-muted);
 }
 
+/* 厂商页签：Claude / GPT / Gemini 分页切换 */
+.probe-vendor-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.probe-vendor-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.probe-vendor-tab:hover {
+  color: var(--primary);
+}
+
+.probe-vendor-tab.is-active {
+  background: var(--surface);
+  color: var(--primary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.probe-vendor-badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+
 @media (max-width: 640px) {
-  .probe-picker-scroll {
-    max-height: 300px;
+  .probe-group-body {
+    max-height: 200px;
   }
 }
 

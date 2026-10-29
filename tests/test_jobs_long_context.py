@@ -58,8 +58,8 @@ async def test_long_context_flag_default_false(
         "https://relay.example",
         "sk-test",
         "claude-haiku-4-5",
-        "quick",
         protocol="anthropic",
+        selected_probes=["identity"],
     )
     # Wait for the fire-and-forget task to finish
     for _ in range(20):
@@ -90,9 +90,9 @@ async def test_long_context_flag_true_propagates(
         "https://relay.example",
         "sk-test",
         "gpt-4o-mini",
-        "full",
         protocol="openai",
         include_long_context=True,
+        selected_probes=["identity", "long_context"],
     )
     for _ in range(20):
         if (await jobs.get(job_id)) and (await jobs.get(job_id)).status in ("done", "error"):
