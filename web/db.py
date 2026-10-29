@@ -27,6 +27,7 @@ from typing import Any, AsyncIterator
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -99,6 +100,13 @@ class Detection(Base):
         String(128), nullable=True, index=True
     )
 
+    # 深度诊断(13–25 项)的结果与状态。未开启深测时 deep_status="skipped"、
+    # deep_report 为 NULL;不会进列表接口(避免把大 JSON 拖进列表页)。
+    deep_report: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    deep_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
@@ -159,6 +167,38 @@ class ProbeResult(Base):
     details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class ProbeExchange(Base):
+    """单探针的一次请求/响应交换快照(完整 body)。
+
+    body 可能很大(长上下文探针的 request 可达 MB 级),所以独立成表、独立
+    接口按需读取;`detections` / `probe_results` 列表接口不带这层数据。
+    ``seq`` 是同一检测内的递增序号(从 1 开始),用于稳定排序。
+    """
+
+    __tablename__ = "probe_exchanges"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    detection_id: Mapped[str] = mapped_column(
+        ForeignKey("detections.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    probe_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # request / response / events / error 都是「原样 JSON」:装不下时由
+    # repository 层降级,保证入库不会失败。
+    request: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    events: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    stream: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+
 def _sqlite_db_path(database_url: str) -> Path | None:
     """从 SQLite URL 里解析出数据库文件路径;非文件型 SQLite 返回 None。
 
@@ -210,6 +250,9 @@ def _ensure_columns(sync_conn: Any) -> None:
     additions = (
         ("credential_id", "VARCHAR(32)"),
         ("credential_name", "VARCHAR(128)"),
+        # 深度诊断列:SQLite 与 PG 都接受裸 JSON 类型。
+        ("deep_report", "JSON"),
+        ("deep_status", "VARCHAR(16)"),
     )
     for name, ddl_type in additions:
         if name in existing_columns:

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type {
+  DeepCheck,
+  DeepReportView,
+  DeepStatus,
   DetectionEvent,
   DetectionEventType,
   DetectorDescriptor,
@@ -11,6 +14,24 @@ import type {
 import { parseDetectionEvent } from "../api";
 
 export type StreamStatus = "idle" | "connecting" | "running" | "finished" | "error";
+
+/** 深度诊断在控制台侧的阶段。 */
+export type DeepStatusView = "idle" | "running" | "done" | "error";
+
+/** 列表项带 pending 标记：占位项（尚未回填结论）用于计算进度。 */
+export interface DeepCheckState extends DeepCheck {
+  pending: boolean;
+}
+
+export interface DeepState {
+  /** 是否应展示深度诊断 UI；老后端不会置为 true。 */
+  active: boolean;
+  status: DeepStatusView;
+  total: number;
+  checks: DeepCheckState[];
+  report: DeepReportView | null;
+  error: string | null;
+}
 
 export interface ProbeState {
   name: string;
@@ -39,6 +60,7 @@ export interface UseDetectionStreamResult {
   jobError: string | null;
   progress: DetectionProgress;
   reconnecting: boolean;
+  deep: DeepState;
 }
 
 interface StreamState {
@@ -49,6 +71,7 @@ interface StreamState {
   jobResult: JobFinishedPayload | null;
   jobError: string | null;
   reconnecting: boolean;
+  deep: DeepState;
 }
 
 const LOG_LIMIT = 200;
@@ -60,7 +83,19 @@ const SSE_EVENT_TYPES: DetectionEventType[] = [
   "probe_finished",
   "job_finished",
   "job_error",
+  "deep_started",
+  "deep_progress",
+  "deep_finished",
 ];
+
+const EMPTY_DEEP: DeepState = {
+  active: false,
+  status: "idle",
+  total: 0,
+  checks: [],
+  report: null,
+  error: null,
+};
 
 const EMPTY_STATE: StreamState = {
   status: "idle",
@@ -70,6 +105,7 @@ const EMPTY_STATE: StreamState = {
   jobResult: null,
   jobError: null,
   reconnecting: false,
+  deep: EMPTY_DEEP,
 };
 
 function probeFromDescriptor(detector: DetectorDescriptor): ProbeState {
@@ -129,6 +165,31 @@ function probePatchFromFinished(
   };
 }
 
+function upsertDeepCheck(
+  checks: DeepCheckState[],
+  next: DeepCheckState
+): DeepCheckState[] {
+  const index = checks.findIndex((check) => check.id === next.id);
+  if (index === -1) return [...checks, next];
+  return checks.map((check, current) =>
+    current === index ? { ...check, ...next } : check
+  );
+}
+
+function deepCheckFromProgress(
+  payload: DeepCheck
+): DeepCheckState {
+  return {
+    id: String(payload.id),
+    title: payload.title || String(payload.id),
+    status: payload.status,
+    value: payload.value ?? "",
+    summary: payload.summary ?? "",
+    details: payload.details,
+    pending: false,
+  };
+}
+
 function reduceEvent(state: StreamState, event: DetectionEvent): StreamState {
   const events = [...state.events, event].slice(-LOG_LIMIT);
 
@@ -172,23 +233,112 @@ function reduceEvent(state: StreamState, event: DetectionEvent): StreamState {
         ),
       };
 
-    case "job_finished":
+    case "job_finished": {
+      // 开启深度诊断时主检测只是第一阶段：连接保持、状态停留在运行中。
+      const deepEnabled = event.payload.deep_enabled === true;
       return {
         ...state,
         events,
-        status: "finished",
+        status: deepEnabled ? "running" : "finished",
         reconnecting: false,
         jobResult: event.payload,
+        deep: deepEnabled
+          ? { ...state.deep, active: true, status: "running" }
+          : state.deep,
       };
+    }
 
-    case "job_error":
+    case "job_error": {
+      const message = event.payload.error || "检测任务异常结束。";
       return {
         ...state,
         events,
         status: "error",
         reconnecting: false,
-        jobError: event.payload.error || "检测任务异常结束。",
+        jobError: message,
+        deep: state.deep.active
+          ? { ...state.deep, status: "error", error: state.deep.error ?? message }
+          : state.deep,
       };
+    }
+
+    case "deep_started": {
+      const list = Array.isArray(event.payload.checks) ? event.payload.checks : [];
+      const checks: DeepCheckState[] = list.map((item) => ({
+        id: String(item.id),
+        title: item.title || String(item.id),
+        status: "unknown",
+        value: "等待中",
+        summary: "",
+        pending: true,
+      }));
+      return {
+        ...state,
+        events,
+        status: "running",
+        deep: {
+          active: true,
+          status: "running",
+          total:
+            typeof event.payload.total === "number" && event.payload.total > 0
+              ? event.payload.total
+              : checks.length,
+          checks,
+          report: null,
+          error: null,
+        },
+      };
+    }
+
+    case "deep_progress":
+      return {
+        ...state,
+        events,
+        status: "running",
+        deep: {
+          ...state.deep,
+          active: true,
+          status: "running",
+          checks: upsertDeepCheck(
+            state.deep.checks,
+            deepCheckFromProgress(event.payload)
+          ),
+        },
+      };
+
+    case "deep_finished": {
+      const deepStatus: DeepStatus =
+        event.payload.status === "error" ? "error" : "done";
+      const incoming = Array.isArray(event.payload.checks)
+        ? event.payload.checks
+        : [];
+      const checks: DeepCheckState[] =
+        incoming.length > 0
+          ? incoming.map((check) => ({ ...check, pending: false }))
+          : state.deep.checks.map((check) => ({ ...check, pending: false }));
+      return {
+        ...state,
+        events,
+        status: "finished",
+        reconnecting: false,
+        deep: {
+          active: true,
+          status: deepStatus,
+          total: checks.length > 0 ? checks.length : state.deep.total,
+          checks,
+          report: {
+            status: deepStatus,
+            error: event.payload.error ?? null,
+            duration_ms:
+              typeof event.payload.duration_ms === "number"
+                ? event.payload.duration_ms
+                : 0,
+            metrics: event.payload.metrics ?? null,
+          },
+          error: event.payload.error ?? null,
+        },
+      };
+    }
 
     default:
       return { ...state, events };
@@ -227,7 +377,11 @@ export function useDetectionStream(jobId: string | null): UseDetectionStreamResu
 
       setState((prev) => reduceEvent(prev, event));
 
-      if (event.type === "job_finished" || event.type === "job_error") {
+      // 开启深度诊断时，job_finished 之后还有一段 deep 事件流，先不关闭连接。
+      if (event.type === "job_finished" && event.payload.deep_enabled !== true) {
+        disposed = true;
+        source.close();
+      } else if (event.type === "deep_finished" || event.type === "job_error") {
         disposed = true;
         source.close();
       }
@@ -302,5 +456,6 @@ export function useDetectionStream(jobId: string | null): UseDetectionStreamResu
     jobError: state.jobError,
     progress,
     reconnecting: state.reconnecting,
+    deep: state.deep,
   };
 }

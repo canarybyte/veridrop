@@ -46,6 +46,8 @@ class StructuredOutputDetector(ActiveDetector):
     name = "structured_output"
     display_name = "结构化输出"
     weight = 12.0
+    category = "capability"
+    description = "验证 tool/JSON 结构化输出"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

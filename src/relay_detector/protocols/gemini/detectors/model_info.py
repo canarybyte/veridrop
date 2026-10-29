@@ -20,6 +20,8 @@ class ModelInfoDetector(ActiveDetector):
     name = "model_info"
     display_name = "模型响应形状"
     weight = 15.0
+    category = "basic"
+    description = "检查响应 model/形状是否符合声明"
 
     async def run(self, client, model: str) -> DetectorResult:
         quick = self.config is not None and self.config.mode == Mode.QUICK

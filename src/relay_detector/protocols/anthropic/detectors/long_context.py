@@ -150,6 +150,8 @@ class LongContextDetector(ActiveDetector):
     name = "long_context"
     display_name = "长上下文真实性"
     weight = 15.0  # heavy — context-window fraud is among the worst lies
+    category = "capability"
+    description = "针探长上下文窗口是否真如宣称"
 
     async def run(self, client, model: str) -> DetectorResult:
         # Opt-in gate. include_long_context_extreme is the superset (uses

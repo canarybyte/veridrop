@@ -246,6 +246,8 @@ cd web-ui && npm install && npm run build && cd ..
 
 进度通过 SSE 推送:`GET /app/api/detect/{job_id}/events`(支持 `Last-Event-ID` 断线重放),最终评分与逐探针结果同时写入数据库。
 
+**深度诊断(13–25 项)**:在提交检测时勾选 `deep`(或请求体传 `"deep": true`)才会运行,默认关闭。它只做**短时采样**(可靠性观察累计目标 ≤12 秒 + 若干单次请求),覆盖 RPM/TPM、成功率与稳定性、TTFT、缓存命中与 TTL 计费、池子大小、签名现签/复签、注入探测、参数透传等;通过 SSE 的 `deep_started` / `deep_progress` / `deep_finished` 事件逐项推送,结果写入 `detections.deep_report` 与 `deep_status`。价格部分只能给出**官方参考成本**(按公开 USD/1M 单价估算),API 看不到中转站的真实标价与扣费,因此利润率留空、需人工填入标价后复核。第 13 项(外接 coding / 蒸馏)是启发式结论,不等同于加密级真伪证明。
+
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
 | `DATABASE_URL` | `sqlite+aiosqlite:///./web_data/veridrop.db` | 结果库;换成 `postgresql+asyncpg://...` 即用 Postgres |
@@ -459,6 +461,17 @@ python3 -m venv venv
 4. 注册到对应 `detectors/__init__.py` 的 `build_all()`
 5. `protocols/<protocol>/config.py` 加权重和 mode 映射
 6. 写测试
+
+#### 新增探针(脚手架)
+
+用脚手架生成符合项目规范的探针骨架并自动注册到 `detectors/__init__.py`:
+
+```powershell
+.\venv\Scripts\python.exe scripts\scaffold_probe.py --protocol anthropic --name cache_probe --display-name "缓存命中验证" --category billing --weight 10 --kind active --passive false
+```
+
+完整规范(分类/权重/模式、Active/Passive、采集与测试要求)见
+[`.trae/skills/veridrop-probe-author/SKILL.md`](.trae/skills/veridrop-probe-author/SKILL.md)。
 
 ---
 

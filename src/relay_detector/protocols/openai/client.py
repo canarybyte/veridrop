@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from ...core import trace
 from ...core.models import UsageMetrics
 
 if TYPE_CHECKING:
@@ -283,15 +284,31 @@ class ThrottledOpenAIClient:
             self.request_count += 1
             usage: dict[str, Any] | None = None
             ttft_recorded = False
+            chunks_for_broadcast: list[dict[str, Any]] = []
+            request_started = time.monotonic()
             async for chunk, elapsed_ms in self._base.chat_completions_stream(**body):
                 if not ttft_recorded and _chunk_has_text_delta(chunk):
                     self._ttft_samples_ms.append(elapsed_ms)
                     ttft_recorded = True
                 if isinstance(chunk.get("usage"), dict):
                     usage = chunk["usage"]
+                chunks_for_broadcast.append(chunk)
                 yield chunk, elapsed_ms
             if usage:
                 self._absorb_response_usage({"usage": usage})
+            latency = int((time.monotonic() - request_started) * 1000)
+            response: dict[str, Any] | None = None
+            if chunks_for_broadcast:
+                response = _synthesize_stream_response(
+                    chunks_for_broadcast, usage
+                )
+            trace.record_exchange(
+                request=body,
+                response=response,
+                latency_ms=latency,
+                stream=True,
+                events=chunks_for_broadcast,
+            )
 
     async def _with_retry(
         self,
@@ -310,6 +327,14 @@ class ThrottledOpenAIClient:
                     if e.status in RETRYABLE_STATUS and attempt < MAX_RETRIES:
                         await self._trigger_backoff(self._retry_after_seconds(e, attempt))
                         continue
+                    trace.record_exchange(
+                        error={
+                            "type": type(e).__name__,
+                            "status": getattr(e, "status", None),
+                            "body": getattr(e, "body", None),
+                        },
+                        status_code=getattr(e, "status", None),
+                    )
                     raise
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
                     last_exc = e
@@ -317,6 +342,7 @@ class ThrottledOpenAIClient:
                         await self._trigger_backoff(min(2.0 ** attempt, MAX_BACKOFF_S))
                         continue
                     raise
+                trace.record_exchange(request=req, response=resp, latency_ms=latency)
                 self._absorb_response_usage(resp)
                 if broadcast:
                     self._broadcast(req, resp, headers, latency)
@@ -335,6 +361,49 @@ def _chunk_has_text_delta(chunk: dict[str, Any]) -> bool:
         if isinstance(delta, dict) and delta.get("content"):
             return True
     return False
+
+
+def _synthesize_stream_response(
+    chunks: list[dict[str, Any]],
+    final_usage: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """把一段流式 chunk 归并成非流式形状的响应(仅用于采集/排查)。
+
+    顶层 id/model/object/created 取首个 chunk,content 拼接所有 delta.content,
+    finish_reason 取最后一个非空值,usage 用最后的 usage chunk。
+    """
+    head = chunks[0] if chunks else {}
+    text_parts: list[str] = []
+    finish_reason: Any = None
+    for chunk in chunks:
+        choices = chunk.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        first = choices[0]
+        if not isinstance(first, dict):
+            continue
+        delta = first.get("delta") or {}
+        content = delta.get("content")
+        if isinstance(content, str):
+            text_parts.append(content)
+        if first.get("finish_reason") is not None:
+            finish_reason = first.get("finish_reason")
+    out = {
+        "id": head.get("id"),
+        "object": "chat.completion",
+        "model": head.get("model"),
+        "created": head.get("created"),
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "".join(text_parts)},
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    if isinstance(final_usage, dict):
+        out["usage"] = final_usage
+    return out
 
 
 OpenAIClient = OpenAIChatClient

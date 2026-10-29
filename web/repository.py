@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timezone
 from typing import Any
@@ -18,7 +19,13 @@ from urllib.parse import urlparse
 
 from sqlalchemy import delete, func, select
 
-from .db import Credential, Detection, ProbeResult, get_session
+from .db import (
+    Credential,
+    Detection,
+    ProbeExchange,
+    ProbeResult,
+    get_session,
+)
 
 
 def _host_from_url(base_url: str) -> str:
@@ -42,6 +49,16 @@ def _iso(value: datetime | None) -> str | None:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _utc_from_ts(ts: Any) -> datetime:
+    """epoch 秒 → 带时区的 datetime;缺失或非法时退回当前时间。"""
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        try:
+            return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            pass
+    return _now()
 
 
 def _detection_filters(
@@ -77,6 +94,40 @@ def _probe_to_dict(probe: ProbeResult) -> dict[str, Any]:
         "duration_ms": probe.duration_ms,
         "error": probe.error,
         "details": probe.details,
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    """把任意对象降级成可 JSON 序列化的结构。
+
+    探针采集到的是 httpx/json 原生对象,理论上都能序列化;但防御性兜底
+    成本极低,且能保证「一条坏数据」绝不会让整次入库失败(那会连带丢掉
+    报告与探针结果)。
+    """
+    if value is None:
+        return None
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:  # noqa: BLE001
+        try:
+            return str(value)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _exchange_to_dict(exchange: ProbeExchange) -> dict[str, Any]:
+    return {
+        "id": exchange.id,
+        "probe_name": exchange.probe_name,
+        "seq": exchange.seq,
+        "request": exchange.request,
+        "response": exchange.response,
+        "events": exchange.events,
+        "error": exchange.error,
+        "stream": exchange.stream,
+        "latency_ms": exchange.latency_ms,
+        "status_code": exchange.status_code,
+        "created_at": _iso(exchange.created_at),
     }
 
 
@@ -234,6 +285,9 @@ async def save_detection(
     failed_probes: int = 0,
     credential_id: str | None = None,
     credential_name: str | None = None,
+    exchanges: list[dict[str, Any]] | None = None,
+    deep_report: dict[str, Any] | None = None,
+    deep_status: str | None = None,
 ) -> None:
     """写入/覆盖一条检测记录及其探针结果(幂等)。
 
@@ -264,6 +318,8 @@ async def save_detection(
         "failed_probes": failed_probes,
         "credential_id": credential_id,
         "credential_name": credential_name,
+        "deep_report": deep_report,
+        "deep_status": deep_status,
         "created_at": created_at,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -273,6 +329,13 @@ async def save_detection(
         async with session.begin():
             await session.execute(
                 delete(ProbeResult).where(ProbeResult.detection_id == detection_id)
+            )
+            # 旧交换快照随新一次写入整体替换:占位记录(status=running)也会走
+            # 这里,先清空可避免残留上一次运行的 body。
+            await session.execute(
+                delete(ProbeExchange).where(
+                    ProbeExchange.detection_id == detection_id
+                )
             )
 
             existing = await session.get(Detection, detection_id)
@@ -304,6 +367,26 @@ async def save_detection(
                     ]
                 )
 
+            if exchanges:
+                session.add_all(
+                    [
+                        ProbeExchange(
+                            detection_id=detection_id,
+                            probe_name=str(e.get("probe") or "unknown")[:64],
+                            seq=index,
+                            request=_json_safe(e.get("request")),
+                            response=_json_safe(e.get("response")),
+                            events=_json_safe(e.get("events")),
+                            error=_json_safe(e.get("error")),
+                            stream=bool(e.get("stream")),
+                            latency_ms=e.get("latency_ms"),
+                            status_code=e.get("status_code"),
+                            created_at=_utc_from_ts(e.get("ts")),
+                        )
+                        for index, e in enumerate(exchanges, start=1)
+                    ]
+                )
+
 
 async def list_detections(
     protocol: str | None = None,
@@ -315,6 +398,14 @@ async def list_detections(
     credential_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """按创建时间倒序列出检测摘要(不含 report / performance 这类大字段)。"""
+    # 相关子查询拿 exchange 数量:列表页只需要一个计数,不读 body,避免 N+1。
+    exchange_count = (
+        select(func.count(ProbeExchange.id))
+        .where(ProbeExchange.detection_id == Detection.id)
+        .correlate(Detection)
+        .scalar_subquery()
+        .label("exchange_count")
+    )
     statement = (
         select(
             Detection.id,
@@ -335,6 +426,8 @@ async def list_detections(
             Detection.failed_probes,
             Detection.credential_id,
             Detection.credential_name,
+            Detection.deep_status,
+            exchange_count,
         )
         .where(
             *_detection_filters(
@@ -354,6 +447,7 @@ async def list_detections(
             **dict(row),
             "created_at": _iso(row["created_at"]),
             "finished_at": _iso(row["finished_at"]),
+            "exchange_count": int(row["exchange_count"] or 0),
         }
         for row in rows
     ]
@@ -396,6 +490,14 @@ async def get_detection(detection_id: str) -> dict[str, Any] | None:
             .all()
         )
 
+        exchange_total = (
+            await session.execute(
+                select(func.count())
+                .select_from(ProbeExchange)
+                .where(ProbeExchange.detection_id == detection_id)
+            )
+        ).scalar_one()
+
         payload: dict[str, Any] = {
             "id": detection.id,
             "protocol": detection.protocol,
@@ -420,10 +522,54 @@ async def get_detection(detection_id: str) -> dict[str, Any] | None:
             "failed_probes": detection.failed_probes,
             "credential_id": detection.credential_id,
             "credential_name": detection.credential_name,
+            # 深测结果是大 JSON,只在详情接口返回;列表接口只带 deep_status。
+            "deep_report": detection.deep_report,
+            "deep_status": detection.deep_status,
             "created_at": _iso(detection.created_at),
             "started_at": _iso(detection.started_at),
             "finished_at": _iso(detection.finished_at),
+            "exchange_count": int(exchange_total or 0),
             "probes": [_probe_to_dict(p) for p in probes],
         }
 
     return payload
+
+
+async def list_exchanges(
+    detection_id: str,
+    probe_name: str | None = None,
+) -> list[dict[str, Any]]:
+    """列出某次检测采集到的请求/响应交换(按 seq, id 升序)。
+
+    body 可能很大,所以只在专用接口里按需调用;``probe_name`` 用于按探针过滤。
+    """
+    statement = select(ProbeExchange).where(
+        ProbeExchange.detection_id == detection_id
+    )
+    if probe_name:
+        statement = statement.where(ProbeExchange.probe_name == probe_name)
+    statement = statement.order_by(ProbeExchange.seq, ProbeExchange.id)
+
+    async with get_session() as session:
+        rows = (await session.execute(statement)).scalars().all()
+
+    return [_exchange_to_dict(row) for row in rows]
+
+
+async def count_exchanges(
+    detection_id: str,
+    probe_name: str | None = None,
+) -> int:
+    """统计某次检测采集到的交换条数(可按探针过滤)。"""
+    statement = (
+        select(func.count())
+        .select_from(ProbeExchange)
+        .where(ProbeExchange.detection_id == detection_id)
+    )
+    if probe_name:
+        statement = statement.where(ProbeExchange.probe_name == probe_name)
+
+    async with get_session() as session:
+        total = (await session.execute(statement)).scalar_one()
+
+    return int(total)

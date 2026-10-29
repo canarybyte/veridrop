@@ -41,6 +41,8 @@ class TokenUsageDetector(ActiveDetector):
     name = "token_usage"
     display_name = "Token 用量"
     weight = 10.0
+    category = "billing"
+    description = "检查 usage 字段真实性"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

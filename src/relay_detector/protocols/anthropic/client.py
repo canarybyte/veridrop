@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from ...core import trace
 from ...core.models import StreamEvent, UsageMetrics
 
 if TYPE_CHECKING:
@@ -372,11 +373,13 @@ class ThrottledClient:
 
             request_started = time.monotonic()
             ttft_recorded = False
+            stream_events: list[dict[str, Any]] = []
             try:
                 async for ev_pair in self._base.messages_stream(
                     on_headers=_capture_headers, **body
                 ):
                     ev, elapsed_ms = ev_pair
+                    stream_events.append({"event": ev.event, "data": ev.data})
                     # First content_block_delta = real first token. Capture
                     # once per stream; subsequent deltas don't refine the
                     # measurement.
@@ -410,6 +413,25 @@ class ThrottledClient:
                     headers = captured_headers[0] if captured_headers else httpx.Headers()
                     latency = int((time.monotonic() - request_started) * 1000)
                     self._broadcast(body, final, headers, latency)
+                    trace.record_exchange(
+                        request=body,
+                        response=final,
+                        latency_ms=latency,
+                        stream=True,
+                        events=stream_events,
+                    )
+                else:
+                    # 连接失败/没有任何事件:也要留一条空交换,便于前端排查。
+                    trace.record_exchange(
+                        request=body,
+                        response=None,
+                        latency_ms=int(
+                            (time.monotonic() - request_started) * 1000
+                        ),
+                        stream=True,
+                        events=stream_events,
+                        error={"type": "stream_incomplete"},
+                    )
 
     @staticmethod
     def _synthesize_stream_response(
@@ -481,6 +503,14 @@ class ThrottledClient:
                         delay = self._retry_after_seconds(e, attempt)
                         await self._trigger_backoff(delay)
                         continue
+                    trace.record_exchange(
+                        error={
+                            "type": type(e).__name__,
+                            "status": getattr(e, "status", None),
+                            "body": getattr(e, "body", None),
+                        },
+                        status_code=getattr(e, "status", None),
+                    )
                     raise
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
                     last_exc = e
@@ -488,6 +518,7 @@ class ThrottledClient:
                         await self._trigger_backoff(min(2.0 ** attempt, MAX_BACKOFF_S))
                         continue
                     raise
+                trace.record_exchange(request=req, response=resp, latency_ms=latency)
                 self._absorb_response_usage(resp)
                 if broadcast:
                     self._broadcast(req, resp, headers, latency)

@@ -74,6 +74,8 @@ class IdentityDetector(ActiveDetector):
     name = "identity"
     display_name = "身份一致性"
     weight = 5.0
+    category = "identity"
+    description = "询问模型自述身份与厂商，识别冒充/后端品牌"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

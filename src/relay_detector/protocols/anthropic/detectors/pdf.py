@@ -41,6 +41,8 @@ class PDFDetector(ActiveDetector):
     name = "pdf"
     display_name = "PDF文档识别"
     weight = 8.0
+    category = "capability"
+    description = "上传 PDF 验证文档识别链路"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

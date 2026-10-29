@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from ...core import trace
 from ...core.models import UsageMetrics
 
 if TYPE_CHECKING:
@@ -258,12 +259,27 @@ class ThrottledGeminiClient:
                 yield chunk, elapsed_ms
             if usage:
                 self._absorb_response_usage({"usage": usage})
+            latency = int((time.monotonic() - request_started) * 1000)
             # Synthesize a non-stream-shaped response from the stream so passive
             # detectors observe ALL traffic, not just non-stream calls.
             if chunks_for_broadcast:
                 synthesized = _synthesize_stream_response(chunks_for_broadcast, usage)
-                latency = int((time.monotonic() - request_started) * 1000)
                 self._broadcast(body, synthesized, httpx.Headers(), latency)
+                trace.record_exchange(
+                    request=body,
+                    response=synthesized,
+                    latency_ms=latency,
+                    stream=True,
+                    events=chunks_for_broadcast,
+                )
+            else:
+                trace.record_exchange(
+                    request=body,
+                    response=None,
+                    latency_ms=latency,
+                    stream=True,
+                    events=chunks_for_broadcast,
+                )
 
     async def _with_retry(
         self,
@@ -282,6 +298,14 @@ class ThrottledGeminiClient:
                     if e.status in RETRYABLE_STATUS and attempt < MAX_RETRIES:
                         await self._trigger_backoff(self._retry_after_seconds(e, attempt))
                         continue
+                    trace.record_exchange(
+                        error={
+                            "type": type(e).__name__,
+                            "status": getattr(e, "status", None),
+                            "body": getattr(e, "body", None),
+                        },
+                        status_code=getattr(e, "status", None),
+                    )
                     raise
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
                     last_exc = e
@@ -289,6 +313,7 @@ class ThrottledGeminiClient:
                         await self._trigger_backoff(min(2.0 ** attempt, MAX_BACKOFF_S))
                         continue
                     raise
+                trace.record_exchange(request=req, response=resp, latency_ms=latency)
                 self._absorb_response_usage(resp)
                 if broadcast:
                     self._broadcast(req, resp, headers, latency)

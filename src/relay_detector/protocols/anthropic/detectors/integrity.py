@@ -52,6 +52,8 @@ class IntegrityDetector(ActiveDetector):
     name = "integrity"
     display_name = "响应完整性"
     weight = 5.0
+    category = "consistency"
+    description = "验证流式响应完整性与事件序列"
     modes = {Mode.STANDARD, Mode.FULL}
 
     async def run(self, client, model: str) -> DetectorResult:

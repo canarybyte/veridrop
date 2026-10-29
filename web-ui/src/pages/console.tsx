@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ConfigForm } from "../components/config-form";
+import { DeepPanel } from "../components/deep-panel";
 import { EventLog } from "../components/event-log";
 import { ProbeGrid } from "../components/probe-grid";
 import { ScorePanel } from "../components/score-panel";
@@ -46,10 +47,14 @@ export default function ConsolePage() {
     jobError,
     progress,
     reconnecting,
+    deep,
   } = useDetectionStream(jobId);
 
   const busy = status === "connecting" || status === "running";
-  const badge = headerChip(status, reconnecting, jobResult);
+  const badge =
+    deep.active && deep.status === "running" && status === "running"
+      ? { label: "深度诊断中", chip: "chip-primary" }
+      : headerChip(status, reconnecting, jobResult);
 
   const handleStart = (nextJobId: string) => {
     // jobId 变化会让 hook 先重置上一轮状态，再订阅新的任务流。
@@ -110,6 +115,17 @@ export default function ConsolePage() {
           />
         </aside>
       </div>
+
+      {deep.active ? (
+        <section className="panel deep-console-panel">
+          <DeepPanel
+            checks={deep.checks}
+            report={deep.report}
+            status={deep.status}
+            error={deep.error}
+          />
+        </section>
+      ) : null}
     </div>
   );
 }

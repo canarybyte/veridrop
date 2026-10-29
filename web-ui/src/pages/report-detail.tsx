@@ -1,14 +1,17 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import type {
+  Exchange,
   JobVerdict,
   ReportDetail,
   ReportPerformance,
   RiskLevel,
 } from "../api";
-import { getReport } from "../api";
+import { getReport, listReportExchanges } from "../api";
+import { DeepPanel } from "../components/deep-panel";
+import { ExchangeDrawer } from "../components/exchange-viewer";
 import {
   MODE_LABEL,
   ProbeStatusChip,
@@ -112,6 +115,9 @@ export default function ReportDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  /** null 表示尚未返回或加载失败（静默降级为“暂无输出”）。 */
+  const [exchanges, setExchanges] = useState<Exchange[] | null>(null);
+  const [activeProbe, setActiveProbe] = useState<string | null>(null);
 
   useEffect(() => {
     if (!reportId) {
@@ -124,12 +130,23 @@ export default function ReportDetailPage() {
     setNotFound(false);
     setError(null);
     setDetail(null);
+    setExchanges(null);
+    setActiveProbe(null);
 
     getReport(reportId)
       .then((response) => {
         if (!active) return;
         setDetail(response);
         setLoading(false);
+        // 输出明细延后加载，不阻塞主内容；失败时静默。
+        listReportExchanges(reportId)
+          .then((payload) => {
+            if (!active) return;
+            setExchanges(Array.isArray(payload.items) ? payload.items : []);
+          })
+          .catch(() => {
+            /* 静默降级：按钮显示“未采集输出”。 */
+          });
       })
       .catch((cause: unknown) => {
         if (!active) return;
@@ -146,6 +163,21 @@ export default function ReportDetailPage() {
       active = false;
     };
   }, [reportId, reloadKey]);
+
+  const exchangesByProbe = useMemo(() => {
+    const groups = new Map<string, Exchange[]>();
+    for (const exchange of exchanges ?? []) {
+      const name = exchange.probe_name;
+      const group = groups.get(name);
+      if (group) group.push(exchange);
+      else groups.set(name, [exchange]);
+    }
+    return groups;
+  }, [exchanges]);
+
+  const activeProbeExchanges = activeProbe
+    ? exchangesByProbe.get(activeProbe) ?? []
+    : [];
 
   if (loading) {
     return (
@@ -224,6 +256,14 @@ export default function ReportDetailPage() {
   const totalFromSummary = numOrNull(detail.total_probes);
   const totalProbes =
     totalFromSummary !== null && totalFromSummary > 0 ? totalFromSummary : probes.length;
+  // 明细尚未返回/加载失败时回落到报告顶层的 exchange_count。
+  const exchangeTotal =
+    exchanges === null ? numOrNull(detail.exchange_count) ?? 0 : exchanges.length;
+  const activeProbeDisplayName = activeProbe
+    ? probes.find((probe) => probe.name === activeProbe)?.display_name ?? activeProbe
+    : "";
+  const deepReport = detail.deep_report ?? null;
+  const deepVisible = deepReport !== null && detail.deep_status !== "skipped";
 
   return (
     <div className="page">
@@ -374,9 +414,12 @@ export default function ReportDetailPage() {
             <span className="chip chip-danger">失败 {failedProbes}</span>
             <span className="chip chip-muted">跳过 {skippedProbes}</span>
             <span className="chip chip-muted">总计 {totalProbes}</span>
+            <span className="chip chip-primary">已采集输出 {exchangeTotal} 条</span>
           </div>
         </div>
-        <p className="panel-hint">失败或执行错误的探针可展开查看原始 details。</p>
+        <p className="panel-hint">
+          失败或执行错误的探针可展开查看原始 details；点击“查看输出”可查看完整上游请求与响应。
+        </p>
 
         {probes.length === 0 ? (
           <div className="empty-state">
@@ -397,6 +440,7 @@ export default function ReportDetailPage() {
                   <th>权重</th>
                   <th>耗时</th>
                   <th>错误</th>
+                  <th>输出</th>
                 </tr>
               </thead>
               <tbody>
@@ -404,6 +448,7 @@ export default function ReportDetailPage() {
                   const expandable = probe.status === "fail" || probe.status === "error";
                   const probeScore =
                     typeof probe.score === "number" ? probe.score.toFixed(1) : "—";
+                  const probeExchanges = exchangesByProbe.get(probe.name) ?? [];
                   return (
                     <Fragment key={probe.name}>
                       <tr>
@@ -425,10 +470,29 @@ export default function ReportDetailPage() {
                             {probe.error ? truncate(probe.error, 120) : "—"}
                           </span>
                         </td>
+                        <td className="report-probe-exchange">
+                          {probeExchanges.length > 0 ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost exchange-open-btn"
+                              onClick={() => setActiveProbe(probe.name)}
+                            >
+                              查看输出 ({probeExchanges.length})
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-ghost exchange-open-btn"
+                              disabled
+                            >
+                              未采集输出
+                            </button>
+                          )}
+                        </td>
                       </tr>
                       {expandable ? (
                         <tr className="report-details-row">
-                          <td colSpan={6}>
+                          <td colSpan={7}>
                             <details className="report-details">
                               <summary>查看 details</summary>
                               <pre className="code report-json">{stringify(probe.details)}</pre>
@@ -444,6 +508,26 @@ export default function ReportDetailPage() {
           </div>
         )}
       </section>
+
+      {deepVisible ? (
+        <section className="panel deep-detail-panel">
+          <DeepPanel
+            checks={Array.isArray(deepReport.checks) ? deepReport.checks : []}
+            report={deepReport}
+            status={deepReport.status === "error" ? "error" : "done"}
+            error={deepReport.error ?? null}
+          />
+        </section>
+      ) : null}
+
+      {activeProbe ? (
+        <ExchangeDrawer
+          probeName={activeProbe}
+          probeDisplayName={activeProbeDisplayName}
+          exchanges={activeProbeExchanges}
+          onClose={() => setActiveProbe(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -126,6 +126,9 @@ class DetectionReport(BaseModel):
     # baseline-vs-relay self-id side-by-side in the report header. None when
     # IdentityDetector was skipped or errored.
     self_reported_identity: str | None = None
+    # 本次实际参与评分/执行的探针名(排序后)。显式勾选检测时记录所选集合,
+    # 按 mode 默认选中时记录实际选中的探测器。旧报告没有该字段,默认空。
+    selected_probes: list[str] = Field(default_factory=list)
     # Detected non-Anthropic backend brand labels found in the identity
     # response (e.g. ["Amazon Q", "AWS"]). Empty for genuine Anthropic.
     # Populated by IdentityDetector and lifted here for fast top-level reads

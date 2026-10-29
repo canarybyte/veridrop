@@ -15,6 +15,8 @@ class IntegrityDetector(ActiveDetector):
     name = "integrity"
     display_name = "流式一致性"
     weight = 15.0
+    category = "consistency"
+    description = "验证流式分片与结束标记"
 
     async def run(self, client, model: str) -> DetectorResult:
         details: dict[str, Any] = {}

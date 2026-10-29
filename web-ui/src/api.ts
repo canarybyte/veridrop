@@ -14,6 +14,10 @@ export interface DetectRequest {
   mode: DetectionMode;
   include_long_context: boolean;
   include_long_context_extreme: boolean;
+  /** 主检测完成后追加深度诊断（13–25 项），默认 false。 */
+  deep: boolean;
+  /** 选中的探针名；null 表示按模式模板执行（后端会拒绝空数组）。 */
+  probes: string[] | null;
 }
 
 export interface DetectResponse {
@@ -66,6 +70,38 @@ export interface ModelsResponse {
   note: string | null;
 }
 
+/* ---------- 探针目录 ---------- */
+
+export interface ProbeCategory {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface ProbeCatalogItem {
+  name: string;
+  display_name: string;
+  description: string;
+  /** 所属分类 id，对应 ProbeCatalog.categories[].id。 */
+  category: string;
+  passive: boolean;
+  weight: number;
+  /** 该探针参与的模式；只允许部分模式时用于展示徽标。 */
+  modes: DetectionMode[];
+  /** 当前 protocol/model 下是否可用（false 时前端禁用勾选）。 */
+  applies: boolean;
+}
+
+export interface ProbeCatalog {
+  protocol: Protocol;
+  model: string | null;
+  /** 展示顺序即数组顺序。 */
+  categories: ProbeCategory[];
+  probes: ProbeCatalogItem[];
+  /** 各模式模板的默认探针集合。 */
+  defaults: Record<DetectionMode, string[]>;
+}
+
 /* ---------- 探针 / 结论 ---------- */
 
 export type ProbeStatus = "pending" | "running" | "pass" | "fail" | "skip" | "error";
@@ -91,6 +127,141 @@ export interface PerformancePayload {
   request_count: number;
   backoff_events: number;
   usage: PerformanceUsage;
+}
+
+/* ---------- 深度诊断 ---------- */
+
+export type DeepCheckStatus = "ok" | "warn" | "unknown" | "unsupported" | "error";
+export type DeepStatus = "done" | "error";
+
+export interface DeepCheck {
+  id: string;
+  title: string;
+  status: DeepCheckStatus;
+  value: string;
+  summary: string;
+  details?: unknown;
+}
+
+export interface DeepRateLimitMetrics {
+  headers: Record<string, string>;
+  status_429: number;
+  retry_after_s: number | null;
+  rpm_estimate: number | null;
+  tpm_estimate: number | null;
+  pool_guess: string;
+  pool_evidence: string[];
+}
+
+export interface DeepReliabilityMetrics {
+  samples: number;
+  success: number;
+  failed: number;
+  success_rate: number | null;
+  errors: Record<string, number>;
+  window_s: number;
+  burst: { concurrency: number; ok: number; failed: number; status_429: number };
+  rate_limit: DeepRateLimitMetrics;
+}
+
+export interface DeepLatencyMetrics {
+  ttft_ms: { min: number | null; median: number | null; p95: number | null };
+  total_ms: { median: number | null };
+  samples: number;
+}
+
+export interface DeepCacheMetrics {
+  supported: boolean;
+  hit_rate: number | null;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  input_tokens: number;
+  ttl_5m: { supported: boolean; read_tokens: number | null };
+  ttl_1h: { supported: boolean; read_tokens: number | null; error: string | null };
+  billing_note: string;
+  evidence: string[];
+}
+
+export interface DeepSignatureMetrics {
+  supported: boolean;
+  present: boolean;
+  freshness: string;
+  signatures_equal: boolean | null;
+  roundtrip_accepted: boolean | null;
+  evidence: string[];
+}
+
+export interface DeepInjectionMetrics {
+  system_prompt_detected: boolean;
+  injection_level: string;
+  extra_input_tokens: number | null;
+  evidence: string[];
+}
+
+export interface DeepPassthroughMetrics {
+  level: string;
+  honored: string[];
+  dropped: string[];
+  evidence: string[];
+}
+
+export interface DeepPricingMetrics {
+  official: {
+    input_per_1m: number | null;
+    output_per_1m: number | null;
+    currency: string;
+    matched_model: string | null;
+  };
+  observed_usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+  };
+  reference_cost_usd: number | null;
+  usage_consistency: string;
+  margin: null;
+  margin_note: string;
+}
+
+export interface DeepRoutingMetrics {
+  coding_plan: { verdict: string; confidence: number };
+  distillation: { verdict: string; confidence: number };
+  evidence: string[];
+}
+
+export interface DeepMetrics {
+  reliability: DeepReliabilityMetrics;
+  latency: DeepLatencyMetrics;
+  cache: DeepCacheMetrics;
+  signature: DeepSignatureMetrics;
+  injection: DeepInjectionMetrics;
+  passthrough: DeepPassthroughMetrics;
+  pricing: DeepPricingMetrics;
+  routing: DeepRoutingMetrics;
+}
+
+/** 单次深度诊断的完整报告（随历史报告落盘）。 */
+export interface DeepReport {
+  enabled: boolean;
+  status: DeepStatus;
+  error: string | null;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  protocol: string;
+  model: string;
+  disclaimer: string;
+  metrics: DeepMetrics;
+  checks: DeepCheck[];
+}
+
+/** 展示层需要的报告子集：实时流只拿到 deep_finished 里的指标，不含落盘元信息。 */
+export interface DeepReportView {
+  status: DeepStatus;
+  error: string | null;
+  duration_ms: number;
+  metrics: DeepMetrics | null;
+  disclaimer?: string;
 }
 
 /* ---------- SSE 事件 payload ---------- */
@@ -140,6 +311,31 @@ export interface JobFinishedPayload {
   probes_passed: number;
   probes_failed: number;
   report_id: string;
+  /** 老后端不下发这两个字段，缺省视为未开启深度诊断。 */
+  deep_enabled?: boolean;
+  deep_status?: "running" | "skipped" | null;
+}
+
+export interface DeepStartedCheck {
+  id: string;
+  title: string;
+}
+
+export interface DeepStartedPayload {
+  total: number;
+  checks: DeepStartedCheck[];
+}
+
+/** 与 DeepCheck 同构：每完成一项推一次。 */
+export type DeepProgressPayload = DeepCheck;
+
+export interface DeepFinishedPayload {
+  status: DeepStatus;
+  error: string | null;
+  duration_ms: number;
+  /** 失败时后端可能给出空/缺省，展示层按 null 兜底。 */
+  metrics: DeepMetrics | null;
+  checks: DeepCheck[];
 }
 
 export interface JobErrorPayload {
@@ -153,7 +349,10 @@ export type DetectionEventType =
   | "probe_started"
   | "probe_finished"
   | "job_finished"
-  | "job_error";
+  | "job_error"
+  | "deep_started"
+  | "deep_progress"
+  | "deep_finished";
 
 export type DetectionEvent =
   | { seq: number; ts: number; type: "queued"; payload: QueuedPayload }
@@ -161,7 +360,10 @@ export type DetectionEvent =
   | { seq: number; ts: number; type: "probe_started"; payload: ProbeStartedPayload }
   | { seq: number; ts: number; type: "probe_finished"; payload: ProbeFinishedPayload }
   | { seq: number; ts: number; type: "job_finished"; payload: JobFinishedPayload }
-  | { seq: number; ts: number; type: "job_error"; payload: JobErrorPayload };
+  | { seq: number; ts: number; type: "job_error"; payload: JobErrorPayload }
+  | { seq: number; ts: number; type: "deep_started"; payload: DeepStartedPayload }
+  | { seq: number; ts: number; type: "deep_progress"; payload: DeepProgressPayload }
+  | { seq: number; ts: number; type: "deep_finished"; payload: DeepFinishedPayload };
 
 /* ---------- 错误处理 ---------- */
 
@@ -296,6 +498,15 @@ export function fetchCredentialModels(id: string): Promise<ModelsResponse> {
   );
 }
 
+/** 拉取探针分类目录；model 可选，只影响各探针的 applies 字段。 */
+export function getProbeCatalog(protocol: Protocol, model?: string): Promise<ProbeCatalog> {
+  const search = new URLSearchParams();
+  search.set("protocol", protocol);
+  const trimmed = model?.trim();
+  if (trimmed) search.set("model", trimmed);
+  return request<ProbeCatalog>(`${API_PREFIX}/probes?${search.toString()}`);
+}
+
 export function submitDetection(body: DetectRequest): Promise<DetectResponse> {
   return request<DetectResponse>(`${API_PREFIX}/detect`, {
     method: "POST",
@@ -312,6 +523,9 @@ const KNOWN_EVENT_TYPES: readonly DetectionEventType[] = [
   "probe_finished",
   "job_finished",
   "job_error",
+  "deep_started",
+  "deep_progress",
+  "deep_finished",
 ];
 
 export function isKnownEventType(type: string): type is DetectionEventType {
@@ -399,6 +613,28 @@ export interface ReportPerformance {
   } | null;
 }
 
+/** 一次上游请求-响应对；流式时为合成后的 response + 原始事件。 */
+export interface Exchange {
+  id: number;
+  probe_name: string;
+  /** 该报告内递增序号。 */
+  seq: number;
+  request: Record<string, unknown> | null;
+  response: Record<string, unknown> | null;
+  /** 流式原始事件 [{event,data}] 或 chunk 列表。 */
+  events: unknown[] | null;
+  error: Record<string, unknown> | null;
+  stream: boolean;
+  latency_ms: number | null;
+  status_code: number | null;
+  created_at: string;
+}
+
+export interface ExchangeListResponse {
+  items: Exchange[];
+  total: number;
+}
+
 export interface ReportDetail {
   id: string;
   protocol: Protocol;
@@ -427,6 +663,12 @@ export interface ReportDetail {
   /** 发起检测时使用的凭据；凭据被删除后可能为 null。 */
   credential_id: string | null;
   credential_name: string | null;
+  /** 该报告已采集的上游请求-响应对数量（旧数据可能缺失）。 */
+  exchange_count?: number;
+  /** 深度诊断报告；未开启时为 null。 */
+  deep_report?: DeepReport | null;
+  /** "done" | "error" | "skipped" | null（旧后端可能缺失）。 */
+  deep_status?: string | null;
 }
 
 export interface ReportListParams {
@@ -456,4 +698,18 @@ export function listReports(params: ReportListParams = {}): Promise<ReportListRe
 
 export function getReport(id: string): Promise<ReportDetail> {
   return request<ReportDetail>(`${API_PREFIX}/reports/${encodeURIComponent(id)}`);
+}
+
+/** 按报告查询已采集的上游请求-响应对；probe 可选，用于按探针 name 过滤。 */
+export function listReportExchanges(
+  id: string,
+  probe?: string
+): Promise<ExchangeListResponse> {
+  const search = new URLSearchParams();
+  const probeName = probe?.trim();
+  if (probeName) search.set("probe", probeName);
+  const query = search.toString();
+  return request<ExchangeListResponse>(
+    `${API_PREFIX}/reports/${encodeURIComponent(id)}/exchanges${query ? `?${query}` : ""}`
+  );
 }

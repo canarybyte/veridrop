@@ -57,6 +57,8 @@ class ThinkingSignatureDetector(ActiveDetector):
     name = "thinking_signature"
     display_name = "思维签名验证"
     weight = 25.0
+    category = "identity"
+    description = "校验 Claude thinking 块的服务端签名"
 
     def applies_to(self, model: str) -> bool:
         info = lookup_model(model)

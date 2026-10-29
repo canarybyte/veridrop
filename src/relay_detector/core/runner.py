@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from . import trace
 from .detectors_base import ActiveDetector, BaseDetector, PassiveDetector
 from .models import (
     DetectorResult,
@@ -102,23 +103,39 @@ class Runner:
             payload["skip_reason"] = skip_reason
         return payload
 
-    def _select_detectors(self, model: str) -> list[BaseDetector]:
-        mode_set = self._mode_detectors[self._config.mode]
-        selected: list[BaseDetector] = []
-        for d in self._all_detectors:
-            if d.name not in mode_set:
-                continue
-            if not d.applies_to(model):
-                continue
-            selected.append(d)
-        return selected
+    def _select_detectors(
+        self, model: str, only: set[str] | None = None
+    ) -> list[BaseDetector]:
+        """按 mode 或显式名单挑选探测器。
+
+        - ``only is None``:保持原有语义,mode 集合 ∩ applies_to(model)。
+        - ``only`` 非 None:忽略 mode 集合,只取名字命中且 applies_to 的探测器,
+          供前端「勾选探针」使用。
+        """
+        if only is None:
+            mode_set = self._mode_detectors[self._config.mode]
+            selected: list[BaseDetector] = []
+            for d in self._all_detectors:
+                if d.name not in mode_set:
+                    continue
+                if not d.applies_to(model):
+                    continue
+                selected.append(d)
+            return selected
+
+        return [
+            d
+            for d in self._all_detectors
+            if d.name in only and d.applies_to(model)
+        ]
 
     async def run(
         self,
         model: str,
         on_event: ProgressCallback | None = None,
+        only: set[str] | None = None,
     ) -> RunOutcome:
-        selected = self._select_detectors(model)
+        selected = self._select_detectors(model, only)
         active = [d for d in selected if isinstance(d, ActiveDetector)]
         passive = [d for d in selected if isinstance(d, PassiveDetector)]
 
@@ -142,11 +159,14 @@ class Runner:
         for d in self._all_detectors:
             if d.name in selected_names:
                 continue
-            reason = (
-                "mode-excluded"
-                if d.name not in self._mode_detectors[self._config.mode]
-                else "model-excluded"
-            )
+            # 显式名单模式下,未勾选的探针统一记为 not-selected;
+            # 按 mode 默认选择时保留原有的 mode/model 排除语义。
+            if only is not None:
+                reason = "not-selected"
+            elif d.name not in self._mode_detectors[self._config.mode]:
+                reason = "mode-excluded"
+            else:
+                reason = "model-excluded"
             result = d.skip(reason)
             skipped.append(result)
             self._emit(
@@ -188,7 +208,9 @@ class Runner:
                 },
             )
             try:
-                result = await d._timed_run(client, model)
+                # 探针归属:scope 内的所有请求/响应都会带上 d.name。
+                with trace.probe_scope(d.name):
+                    result = await d._timed_run(client, model)
             except asyncio.CancelledError:
                 # 整体超时导致 wait_for 取消：不把“取消”当作探针异常上报，
                 # 也不吞掉取消本身；超时分支会统一生成 error 结果并补发事件。
@@ -236,7 +258,8 @@ class Runner:
         # samples already exist so standard/full pay nothing extra.
         if self._ttft_probe is not None and not getattr(client, "_ttft_samples_ms", []):
             try:
-                await self._ttft_probe(client, model)
+                with trace.probe_scope("ttft_probe"):
+                    await self._ttft_probe(client, model)
             except Exception:  # noqa: BLE001 — probe failures must not crash run
                 pass
 

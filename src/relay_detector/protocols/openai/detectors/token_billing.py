@@ -46,6 +46,8 @@ class TokenBillingDetector(ActiveDetector):
     name = "token_billing"
     display_name = "Token 计费"
     weight = 10.0
+    category = "billing"
+    description = "检测 token 计费是否被放大/篡改"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

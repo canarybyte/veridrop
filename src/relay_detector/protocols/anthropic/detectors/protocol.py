@@ -33,6 +33,8 @@ class ProtocolDetector(PassiveDetector):
     name = "protocol"
     display_name = "协议规范性"
     weight = 5.0
+    category = "basic"
+    description = "被动检查响应字段是否符合协议规范"
 
     def __init__(self) -> None:
         self._issues: set[str] = set()

@@ -84,6 +84,8 @@ class LongContextDetector(ActiveDetector):
     name = "long_context"
     display_name = "长上下文真实性"
     weight = 15.0  # heavy when it runs — context window is a top-tier promise
+    category = "capability"
+    description = "验证长上下文窗口是否真实"
 
     async def run(self, client, model: str) -> DetectorResult:
         # Opt-in gate. `include_long_context_extreme` is the superset

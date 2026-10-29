@@ -18,6 +18,8 @@ class TokenParityDetector(ActiveDetector):
     name = "token_parity"
     display_name = "Token 字段对齐"
     weight = 10.0
+    category = "consistency"
+    description = "比对 usage 与官方字段形状"
 
     async def run(self, client, model: str) -> DetectorResult:
         baseline = _load_baseline_usage(model, self.config.mode if self.config else None)

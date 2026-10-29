@@ -27,6 +27,8 @@ class MessageIDDetector(PassiveDetector):
     name = "message_id"
     display_name = "消息标识规范"
     weight = 5.0
+    category = "basic"
+    description = "被动检查 message id 前缀与格式"
 
     def __init__(self) -> None:
         # Tracking violations as labels so duplicates collapse.

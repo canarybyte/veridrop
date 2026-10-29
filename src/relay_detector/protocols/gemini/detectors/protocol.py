@@ -33,6 +33,8 @@ class ProtocolDetector(PassiveDetector):
     name = "protocol"
     display_name = "协议规范性"
     weight = 15.0
+    category = "basic"
+    description = "被动检查 OpenAI 兼容协议字段"
 
     def __init__(self) -> None:
         self._observations: list[dict[str, Any]] = []

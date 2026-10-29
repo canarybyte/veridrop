@@ -31,6 +31,8 @@ class FunctionCallingDetector(ActiveDetector):
     name = "function_calling"
     display_name = "函数调用"
     weight = 15.0
+    category = "capability"
+    description = "验证 tool_calls 结构与执行"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

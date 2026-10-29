@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import type { Credential, DetectionMode } from "../api";
 import { listCredentials, submitDetection } from "../api";
 import { CredentialForm } from "./credential-form";
-import { ModelPicker } from "./model-picker";
+import { ModelPicker, guessProtocol } from "./model-picker";
+import { ProbePicker } from "./probe-picker";
 
 interface ModeOption {
   value: DetectionMode;
@@ -32,8 +33,10 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
   const [showCredentialForm, setShowCredentialForm] = useState(false);
   const [model, setModel] = useState("");
   const [mode, setMode] = useState<DetectionMode>("standard");
+  const [selectedProbes, setSelectedProbes] = useState<string[] | null>(null);
   const [includeLongContext, setIncludeLongContext] = useState(false);
   const [includeExtreme, setIncludeExtreme] = useState(false);
+  const [deepEnabled, setDeepEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +44,22 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
   const selectedCredential = credentials.find((item) => item.id === selectedId) ?? null;
   const activeMode = MODES.find((item) => item.value === mode) ?? MODES[1];
   const trimmedModel = model.trim();
+  const protocol = guessProtocol(trimmedModel);
   const canStart = Boolean(selectedId) && Boolean(trimmedModel);
+  const longContextProbeSelected = selectedProbes?.includes("long_context") ?? false;
+
+  // 探针集合随协议变化，切到其他协议时自定义选择失效，回到“按模式模板”。
+  const previousProtocol = useRef(protocol);
+  useEffect(() => {
+    if (previousProtocol.current === protocol) return;
+    previousProtocol.current = protocol;
+    setSelectedProbes(null);
+  }, [protocol]);
+
+  // 显式选中 long_context 时自动打开长上下文开关；用户仍可手动关闭。
+  useEffect(() => {
+    if (longContextProbeSelected) setIncludeLongContext(true);
+  }, [longContextProbeSelected]);
 
   const loadCredentials = useCallback(async () => {
     setCredentialsLoading(true);
@@ -91,6 +109,10 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
       setError("请选择或手动填写模型。");
       return;
     }
+    if (selectedProbes !== null && selectedProbes.length === 0) {
+      setError("至少选择一个探针。");
+      return;
+    }
 
     setError(null);
     setSubmitting(true);
@@ -101,6 +123,8 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
         mode,
         include_long_context: includeLongContext,
         include_long_context_extreme: includeExtreme,
+        deep: deepEnabled,
+        probes: selectedProbes,
       });
       if (!response.job_id) {
         throw new Error("服务未返回任务 ID。");
@@ -230,6 +254,15 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
         <span className="field-hint">{activeMode.desc}</span>
       </div>
 
+      <ProbePicker
+        protocol={protocol}
+        model={trimmedModel}
+        mode={mode}
+        value={selectedProbes}
+        onChange={setSelectedProbes}
+        disabled={pending}
+      />
+
       <div className="field">
         <span className="field-label">扩展检测</span>
         <label className="check-row">
@@ -244,6 +277,11 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
           />
           <span>长上下文探针</span>
         </label>
+        {longContextProbeSelected && !includeLongContext ? (
+          <span className="field-hint">
+            已选中 long_context 探针，关闭此开关后后端仍会按探针选择启用长上下文。
+          </span>
+        ) : null}
         <label className="check-row">
           <input
             type="checkbox"
@@ -256,6 +294,18 @@ export function ConfigForm({ busy, onStart }: ConfigFormProps) {
           />
           <span>超长上下文（extreme）</span>
         </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={deepEnabled}
+            disabled={pending}
+            onChange={(event) => setDeepEnabled(event.target.checked)}
+          />
+          <span>深度诊断（13–25 项）</span>
+        </label>
+        <span className="field-hint">
+          额外约 20+ 次请求、短时采样，默认关闭；结论为启发式，不等同官方计费。
+        </span>
       </div>
 
       {error ? (

@@ -31,6 +31,8 @@ class ConsistencyDetector(ActiveDetector):
     name = "consistency"
     display_name = "模型一致性"
     weight = 10.0
+    category = "consistency"
+    description = "重复请求比对输出与模型字段是否稳定"
 
     async def run(self, client, model: str) -> DetectorResult:
         is_quick = self.config is not None and self.config.mode == Mode.QUICK

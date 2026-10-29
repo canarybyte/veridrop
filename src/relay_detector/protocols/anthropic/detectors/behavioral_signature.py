@@ -38,6 +38,8 @@ class BehavioralSignatureDetector(ActiveDetector):
     name = "behavioral_signature"
     display_name = "行为签名验证"
     weight = 15.0
+    category = "identity"
+    description = "用行为指纹判断是否为官方模型族"
 
     async def run(self, client, model: str) -> DetectorResult:
         signatures = _load_signatures()

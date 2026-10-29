@@ -36,6 +36,8 @@ class KnowledgeDetector(ActiveDetector):
     name = "knowledge"
     display_name = "知识准确度"
     weight = 10.0
+    category = "capability"
+    description = "用知识题验证真实能力与知识截止"
 
     async def run(self, client, model: str) -> DetectorResult:
         questions = _load_questions()

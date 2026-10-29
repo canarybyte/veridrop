@@ -41,6 +41,7 @@ from .credentials import (
     encrypt_api_key,
     mask_key,
 )
+from .probe_catalog import build_catalog
 from .progress import bus
 
 
@@ -213,6 +214,7 @@ def _synthetic_terminal_event(job: jobs.Job, seq: int) -> dict[str, Any] | None:
             "detected_brands": list(
                 report.get("detected_non_anthropic_brands") or []
             ),
+            "selected_probes": list(report.get("selected_probes") or []),
             # 磁盘读回的旧 job 没有可靠起止时间，给 0 保证字段类型稳定。
             "duration_ms": 0,
             "performance": report.get("performance") or {},
@@ -338,6 +340,10 @@ class DetectRequest(BaseModel):
     mode: Literal["quick", "standard", "full"]
     include_long_context: bool = False
     include_long_context_extreme: bool = False
+    # 深度诊断(13–25 项)手动开关,默认关闭。
+    deep: bool = False
+    # 显式勾选的探针名;None 表示按 mode 默认选择,[] 由路由层拒绝。
+    probes: list[str] | None = None
 
     @field_validator("credential_id", "model")
     @classmethod
@@ -518,7 +524,39 @@ async def app_credential_models(credential_id: str) -> dict[str, Any]:
     return result
 
 
+# ---------------------------------------------------------- /app/api/probes
+
+
+@router.get("/app/api/probes")
+async def app_probes(
+    protocol: Literal["anthropic", "openai", "gemini"] = Query(...),
+    model: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """探针目录:分类、可选探针、各 mode 的默认选择。"""
+    try:
+        return build_catalog(protocol, model or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
 # ---------------------------------------------------------- /app/api/detect
+
+
+def _validate_selected_probes(
+    probes: list[str] | None, protocol: str, model: str
+) -> list[str] | None:
+    """校验显式勾选的探针名;None 表示按 mode 默认,[] 直接拒绝。"""
+    if probes is None:
+        return None
+    if not probes:
+        raise HTTPException(status_code=422, detail="至少选择一个探针")
+    known = {p["name"] for p in build_catalog(protocol, model)["probes"]}
+    for name in probes:
+        if name not in known:
+            raise HTTPException(
+                status_code=422, detail=f"unknown probe: {name}"
+            )
+    return probes
 
 
 @router.post("/app/api/detect")
@@ -534,17 +572,24 @@ async def app_detect(payload: DetectRequest) -> dict[str, str]:
             status_code=503, detail="credential cannot be decrypted"
         )
 
+    protocol = _protocol_from_model(payload.model)
+    selected_probes = _validate_selected_probes(
+        payload.probes, protocol, payload.model
+    )
+
     # 明文 key 只作为局部变量传给 jobs;Job 结束后即丢弃,不入库。
     job_id = await jobs.submit(
         credential["base_url"],
         plain_key,
         payload.model,
         payload.mode,
-        protocol=_protocol_from_model(payload.model),
+        protocol=protocol,
         include_long_context=payload.include_long_context,
         include_long_context_extreme=payload.include_long_context_extreme,
         credential_id=credential["id"],
         credential_name=credential["name"],
+        deep=payload.deep,
+        selected_probes=selected_probes,
     )
     return {"job_id": job_id, "status": "queued"}
 
@@ -569,6 +614,9 @@ async def app_detect_status(job_id: str) -> dict[str, Any]:
         "finished_at": job.finished_at,
         "error": job.error,
         "progress": _progress_for_job(job_id, report),
+        # 深测状态:running/done/error/skipped;磁盘回落的旧 job 为 null。
+        "deep": bool(job.deep),
+        "deep_status": job.deep_status,
         "total_score": report.get("total_score") if report else None,
         "verdict": report.get("verdict") if report else None,
         "risk_level": _risk_level_from_report(report),
@@ -651,8 +699,20 @@ def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
 
     report = out.get("report")
     out["report"] = report if isinstance(report, dict) else None
+    # 本次实际参与的探针名:报告内有则透出,旧报告统一给空列表。
+    out["selected_probes"] = list(
+        (report.get("selected_probes") if isinstance(report, dict) else None)
+        or []
+    )
+    # 深测结果:旧报告(磁盘回落 / 未开启深测)没有这两个字段,统一给 null。
+    deep_report = out.get("deep_report")
+    out["deep_report"] = deep_report if isinstance(deep_report, dict) else None
+    out.setdefault("deep_status", None)
     if out.get("risk_level") is None and isinstance(report, dict):
         out["risk_level"] = _risk_level_from_report(report)
+
+    # 磁盘回落的旧 job 没有交换快照,统一给 0 保证字段类型稳定。
+    out["exchange_count"] = int(out.get("exchange_count") or 0)
 
     for key in (
         "id",
@@ -731,7 +791,33 @@ def _record_from_job(job: jobs.Job) -> dict[str, Any]:
         "failed_probes": failed,
         "credential_id": job.credential_id,
         "credential_name": job.credential_name,
+        # 磁盘回落的旧 job 没有深测结果。
+        "deep_report": None,
+        "deep_status": None,
     }
+
+
+def _deep_summary(record: dict[str, Any]) -> dict[str, Any] | None:
+    """把 deep_report 压缩成 agent 友好的摘要;没有深测返回 None。"""
+    deep_report = record.get("deep_report")
+    if not isinstance(deep_report, dict):
+        return None
+    checks_raw = deep_report.get("checks")
+    checks: list[dict[str, Any]] = []
+    if isinstance(checks_raw, list):
+        for item in checks_raw:
+            if not isinstance(item, dict):
+                continue
+            checks.append(
+                {
+                    "id": item.get("id"),
+                    "title": item.get("title"),
+                    "status": item.get("status"),
+                    "value": item.get("value"),
+                    "summary": item.get("summary"),
+                }
+            )
+    return {"status": deep_report.get("status"), "checks": checks}
 
 
 async def _load_report(report_id: str) -> dict[str, Any] | None:
@@ -750,6 +836,24 @@ async def _load_report(report_id: str) -> dict[str, Any] | None:
     if job is None or not isinstance(job.report, dict):
         return None
     return _normalize_record(_record_from_job(job))
+
+
+async def _exchanges_payload(
+    report_id: str, probe: str | None
+) -> dict[str, Any]:
+    """检测交换快照的统一响应体（/app 与 /api/v1 共用）。
+
+    报告不存在（库与磁盘回落都没有）→ 404；老报告没有采集 → 空列表。
+    """
+    record = await _load_report(report_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    try:
+        items = await repository.list_exchanges(report_id, probe_name=probe)
+    except SQLAlchemyError as exc:
+        logger.warning("db read failed: %s", exc)
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"items": items, "total": len(items)}
 
 
 # --------------------------------------------------------------- /app/api/reports
@@ -784,6 +888,15 @@ async def app_report_detail(report_id: str) -> dict[str, Any]:
     return record
 
 
+@router.get("/app/api/reports/{report_id}/exchanges")
+async def app_report_exchanges(
+    report_id: str,
+    probe: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """按探针查看该检测采集到的请求/响应交换（完整 body）。"""
+    return await _exchanges_payload(report_id, probe)
+
+
 # ------------------------------------------------------------------- /api/v1
 
 
@@ -812,6 +925,15 @@ async def agent_report_detail(report_id: str) -> dict[str, Any]:
     if record is None:
         raise HTTPException(status_code=404, detail="report not found")
     return record
+
+
+@agent_router.get("/reports/{report_id}/exchanges")
+async def agent_report_exchanges(
+    report_id: str,
+    probe: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """外部 agent 只读接口：与 /app/api/reports/{id}/exchanges 同形状。"""
+    return await _exchanges_payload(report_id, probe)
 
 
 @agent_router.get("/reports/{report_id}/analysis")
@@ -899,6 +1021,11 @@ async def agent_report_analysis(report_id: str) -> dict[str, Any]:
         "probes": analysis_probes,
         "issues": issues,
         "failed_probes": failed_probes,
+        # 本次显式勾选/实际参与的探针名;旧报告没有该字段时为 []。
+        "selected_probes": record.get("selected_probes") or [],
+        "exchange_count": int(record.get("exchange_count") or 0),
+        # 深度诊断摘要(13–25 项);未开启深测时为 null。
+        "deep_summary": _deep_summary(record),
         "report_url": f"/app/reports/{record.get('id') or report_id}",
     }
 

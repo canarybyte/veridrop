@@ -11,6 +11,8 @@ class BasicRequestDetector(ActiveDetector):
     name = "basic_request"
     display_name = "基础请求"
     weight = 15.0
+    category = "basic"
+    description = "最小请求验证 Gemini 兼容层可用性"
 
     async def run(self, client, model: str) -> DetectorResult:
         try:

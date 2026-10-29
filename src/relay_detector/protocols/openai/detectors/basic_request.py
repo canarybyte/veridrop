@@ -10,6 +10,8 @@ class BasicRequestDetector(ActiveDetector):
     name = "basic_request"
     display_name = "基础请求"
     weight = 15.0
+    category = "basic"
+    description = "最小对话请求验证基本可用性"
     max_completion_tokens = 96
 
     async def run(self, client, model: str) -> DetectorResult:

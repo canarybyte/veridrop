@@ -84,6 +84,33 @@ function lineOf(event: DetectionEvent): LogLine {
         text: "检测任务异常结束",
         error: event.payload.error,
       };
+    case "deep_started":
+      return {
+        tone: "primary",
+        text: `深度诊断开始，共 ${event.payload.total} 项`,
+        error: null,
+      };
+    case "deep_progress":
+      return {
+        tone:
+          event.payload.status === "ok"
+            ? "success"
+            : event.payload.status === "error"
+              ? "danger"
+              : "muted",
+        text: `深度诊断「${event.payload.title || event.payload.id}」：${
+          event.payload.value || event.payload.status
+        }`,
+        error: null,
+      };
+    case "deep_finished":
+      return {
+        tone: event.payload.status === "error" ? "danger" : "success",
+        text: `深度诊断${
+          event.payload.status === "error" ? "失败" : "完成"
+        } · ${event.payload.checks.length} 项`,
+        error: event.payload.error,
+      };
   }
 }
 

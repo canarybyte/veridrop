@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from relay_detector.core import trace
 from relay_detector.core.runner import ProgressCallback
 from relay_detector.models import (
     DetectionReport,
@@ -38,6 +39,7 @@ from relay_detector.scorer import (
     summary_text,
 )
 
+from .deep_probe import DEEP_TOTAL, CHECK_TITLES, run_deep
 from .progress import bus
 
 
@@ -58,6 +60,13 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 _MAX_INFLIGHT = 6
 _SEMA = asyncio.Semaphore(_MAX_INFLIGHT)
 
+# 单次检测最多保留的交换快照条数。探针异常时(比如某个探针狂重试)可能产生
+# 大量请求,超过上限直接丢弃后续,避免把库写爆。
+_MAX_EXCHANGES = 500
+# 深度诊断的整体墙钟上限:上游不可达时客户端自身重试可能拖很久,
+# 超过该值直接判深测失败,绝不让一次作业无限挂起。
+_DEEP_TIMEOUT_S = 300.0
+
 
 @dataclass
 class Job:
@@ -75,6 +84,13 @@ class Job:
     # 凭据快照:检测是按「URL + 命名 Key」粒度的,报告要能按凭据追溯。
     credential_id: str | None = None
     credential_name: str | None = None
+    # 深度诊断(13–25 项)是手动开启的可选加测。deep 表示本次是否请求了深测,
+    # deep_status 记录它的执行状态(running/done/error/skipped)。
+    deep: bool = False
+    deep_status: str | None = None
+    deep_report: dict[str, Any] | None = None
+    # 用户显式勾选的探针名;None 表示按 mode 默认选择。
+    selected_probes: list[str] | None = None
 
 
 _JOBS: dict[str, Job] = {}
@@ -98,6 +114,8 @@ async def submit(
     *,
     credential_id: str | None = None,
     credential_name: str | None = None,
+    deep: bool = False,
+    selected_probes: list[str] | None = None,
 ) -> str:
     """Queue a detection job and return the job id immediately.
 
@@ -109,6 +127,10 @@ async def submit(
         models). $0.05–$8 cost, 30s–5min wall time. Catches "advertised X
         but capped at Y<X" fraud that the standard tier misses on big
         models. Implies standard (it's a superset).
+
+    ``deep`` (default False) 开启深度诊断(13–25 项):主报告完成并发出
+    job_finished 之后再跑一组短时采样,结果通过 deep_* 事件与库里的
+    deep_report/deep_status 暴露。
     """
     job_id = _new_job_id()
     job = Job(
@@ -119,6 +141,9 @@ async def submit(
         mode=mode,
         credential_id=credential_id,
         credential_name=credential_name,
+        deep=deep,
+        deep_status="running" if deep else "skipped",
+        selected_probes=(list(selected_probes) if selected_probes else None),
     )
     async with _LOCK:
         _JOBS[job_id] = job
@@ -132,13 +157,15 @@ async def submit(
             "protocol": protocol,
             "target_model": model,
             "mode": mode,
+            "deep": deep,
         },
     )
     asyncio.create_task(
         _run(
             job_id, base_url, api_key, model, mode, protocol,
             include_long_context, include_long_context_extreme,
-            credential_id, credential_name,
+            credential_id, credential_name, deep,
+            list(selected_probes) if selected_probes else None,
         )
     )
     return job_id
@@ -206,6 +233,8 @@ async def _run(
     include_long_context_extreme: bool = False,
     credential_id: str | None = None,
     credential_name: str | None = None,
+    deep: bool = False,
+    selected_probes: list[str] | None = None,
 ) -> None:
     async with _SEMA:
         async with _LOCK:
@@ -223,10 +252,26 @@ async def _run(
         def on_event(event_type: str, payload: dict[str, Any]) -> None:
             bus.publish(job_id, event_type, payload)
 
+        # 探针级别的请求/响应采集:body 原样保留(不截断),条数封顶。
+        exchanges: list[dict[str, Any]] = []
+
+        def _collect_exchange(item: dict[str, Any]) -> None:
+            if len(exchanges) < _MAX_EXCHANGES:
+                exchanges.append(item)
+
+        token = trace.set_collector(_collect_exchange)
+
         try:
             cfg = ExecutionConfig.for_mode(Mode(mode), max_concurrent=3)
             cfg.include_long_context = include_long_context
             cfg.include_long_context_extreme = include_long_context_extreme
+            # 显式勾选了长上下文探针时,自动打开 include_long_context:用户
+            # 勾选即视为授权这次昂贵探测,不再要求额外勾复选框。
+            selects_long_context = bool(
+                selected_probes and "long_context" in selected_probes
+            )
+            if selects_long_context:
+                cfg.include_long_context = True
             # Long-context probes blow past the regular per-mode wall-clock
             # budget (60–180s). 1M-token requests alone take 2–4 minutes
             # upstream; the extreme path may also sleep 75s per tier waiting
@@ -234,13 +279,15 @@ async def _run(
             # rate-limited probes (see _probe_tier_with_tpm_retry).
             # Without this bump asyncio.wait_for kills the runner
             # mid-detector and the user gets a misleading "fail" instead.
-            if include_long_context_extreme:
+            if include_long_context_extreme or selects_long_context:
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 900.0)
             elif include_long_context:
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 300.0)
+            # 显式勾选时忽略 mode 集合,只跑用户选中的探针。
+            only = set(selected_probes) if selected_probes else None
             if protocol == "openai":
                 outcome = await _run_openai(
-                    base_url, api_key, model, cfg, on_event=on_event
+                    base_url, api_key, model, cfg, on_event=on_event, only=only
                 )
                 report_protocol = Protocol.OPENAI
                 report_tier = DetectionTier.BEHAVIORAL
@@ -252,7 +299,7 @@ async def _run(
                 )
             elif protocol == "gemini":
                 outcome = await _run_gemini(
-                    base_url, api_key, model, cfg, on_event=on_event
+                    base_url, api_key, model, cfg, on_event=on_event, only=only
                 )
                 report_protocol = Protocol.GEMINI
                 report_tier = DetectionTier.PROTOCOL
@@ -264,7 +311,7 @@ async def _run(
                 )
             elif protocol == "anthropic":
                 outcome = await _run_anthropic(
-                    base_url, api_key, model, cfg, on_event=on_event
+                    base_url, api_key, model, cfg, on_event=on_event, only=only
                 )
                 report_protocol = Protocol.ANTHROPIC
                 report_tier = DetectionTier.CRYPTOGRAPHIC
@@ -295,6 +342,21 @@ async def _run(
                     brands = [x for x in b if isinstance(x, str)]
                 break
 
+            # 报告记录本次参与的探针:显式勾选取用户所选(排序);否则取
+            # Runner 实际选中的探针(即未被 mode/model 排除的那些)。
+            if selected_probes:
+                report_selected = sorted(set(selected_probes))
+            else:
+                report_selected = sorted(
+                    r.name
+                    for r in outcome.results
+                    if not (
+                        r.status == "skip"
+                        and r.details.get("skip_reason")
+                        in ("mode-excluded", "model-excluded")
+                    )
+                )
+
             report = DetectionReport(
                 protocol=report_protocol,
                 tier=report_tier,
@@ -313,6 +375,7 @@ async def _run(
                 run_error=run_error,
                 self_reported_identity=self_id,
                 detected_non_anthropic_brands=brands,
+                selected_probes=report_selected,
             )
             report_dict = json.loads(report.model_dump_json())
             report_path(job_id, protocol).write_text(
@@ -339,6 +402,123 @@ async def _run(
                 1 for r in outcome.results if r.status in ("fail", "error")
             )
 
+            # 主检测的结束时间(用于 job_finished 的 duration_ms)。
+            main_finished_at = time.time()
+            # 存在致命 run_error(余额/模型不可用)时深测没有意义:直接跳过,
+            # 并让 job_finished 如实告诉前端"已跳过",避免前端空等 deep_finished。
+            deep_effective = bool(deep) and not run_error
+            bus.publish(
+                job_id,
+                "job_finished",
+                {
+                    "job_id": job_id,
+                    "total_score": report_dict["total_score"],
+                    "verdict": report_dict["verdict"],
+                    "risk_level": risk_level,
+                    "summary": report_dict.get("summary") or "",
+                    "run_error": report_dict.get("run_error"),
+                    "self_reported_identity": report_dict.get(
+                        "self_reported_identity"
+                    ),
+                    "detected_brands": report_dict.get(
+                        "detected_non_anthropic_brands"
+                    )
+                    or [],
+                    "selected_probes": report_dict.get("selected_probes") or [],
+                    "duration_ms": int(
+                        (main_finished_at - started_at) * 1000
+                    ),
+                    "performance": report_dict.get("performance") or {},
+                    "probes_total": probes_total,
+                    "probes_passed": probes_passed,
+                    "probes_failed": probes_failed,
+                    "report_id": job_id,
+                    "credential_id": credential_id,
+                    "credential_name": credential_name,
+                    "exchange_count": len(exchanges),
+                    # 深度诊断会在这条事件之后才开始,前端按 deep_status 续订阅。
+                    "deep_enabled": deep_effective,
+                    "deep_status": "running" if deep_effective else "skipped",
+                },
+            )
+
+            # ---- 深度诊断(13–25 项,手动开启) ---------------------
+            deep_report: dict[str, Any] | None = None
+            deep_status = "skipped"
+            if deep_effective:
+                async with _LOCK:
+                    if job_id in _JOBS:
+                        _JOBS[job_id].deep_status = "running"
+                bus.publish(
+                    job_id,
+                    "deep_started",
+                    {
+                        "total": DEEP_TOTAL,
+                        "checks": [
+                            {"id": cid, "title": title}
+                            for cid, title in sorted(
+                                CHECK_TITLES.items(),
+                                key=lambda item: int(item[0]),
+                            )
+                        ],
+                    },
+                )
+                try:
+                    # 原始 api_key 只作为参数传给 run_deep,不入库、不出事件。
+                    deep_report = await asyncio.wait_for(
+                        run_deep(
+                            base_url,
+                            api_key,
+                            model,
+                            protocol,
+                            on_progress=lambda check: bus.publish(
+                                job_id, "deep_progress", check
+                            ),
+                            main_report=report_dict,
+                        ),
+                        timeout=_DEEP_TIMEOUT_S,
+                    )
+                    deep_status = "done"
+                    bus.publish(
+                        job_id,
+                        "deep_finished",
+                        {
+                            "status": "done",
+                            "error": None,
+                            "duration_ms": deep_report.get("duration_ms"),
+                            "metrics": deep_report.get("metrics") or {},
+                            "checks": deep_report.get("checks") or [],
+                        },
+                    )
+                except Exception as e:  # noqa: BLE001 — 深测失败不影响主报告
+                    error_text = f"{type(e).__name__}: {e}"
+                    deep_status = "error"
+                    deep_report = {
+                        "enabled": True,
+                        "status": "error",
+                        "error": error_text,
+                        "checks": [],
+                    }
+                    bus.publish(
+                        job_id,
+                        "deep_finished",
+                        {
+                            "status": "error",
+                            "error": error_text,
+                            "checks": [],
+                        },
+                    )
+                async with _LOCK:
+                    if job_id in _JOBS:
+                        _JOBS[job_id].deep_status = deep_status
+                        _JOBS[job_id].deep_report = deep_report
+            elif deep:
+                # 请求了深测但主检测是致命错误,如实标 skipped(不会发 deep_* 事件)。
+                async with _LOCK:
+                    if job_id in _JOBS:
+                        _JOBS[job_id].deep_status = "skipped"
+
+            # 深测结束(或跳过)之后统一落库 + 收尾 job 状态。
             finished_at = time.time()
             async with _LOCK:
                 if job_id in _JOBS:
@@ -367,34 +547,9 @@ async def _run(
                 failed_probes=probes_failed,
                 credential_id=credential_id,
                 credential_name=credential_name,
-            )
-
-            bus.publish(
-                job_id,
-                "job_finished",
-                {
-                    "job_id": job_id,
-                    "total_score": report_dict["total_score"],
-                    "verdict": report_dict["verdict"],
-                    "risk_level": risk_level,
-                    "summary": report_dict.get("summary") or "",
-                    "run_error": report_dict.get("run_error"),
-                    "self_reported_identity": report_dict.get(
-                        "self_reported_identity"
-                    ),
-                    "detected_brands": report_dict.get(
-                        "detected_non_anthropic_brands"
-                    )
-                    or [],
-                    "duration_ms": int((finished_at - started_at) * 1000),
-                    "performance": report_dict.get("performance") or {},
-                    "probes_total": probes_total,
-                    "probes_passed": probes_passed,
-                    "probes_failed": probes_failed,
-                    "report_id": job_id,
-                    "credential_id": credential_id,
-                    "credential_name": credential_name,
-                },
+                exchanges=exchanges,
+                deep_report=deep_report,
+                deep_status=deep_status,
             )
 
         except Exception as e:  # noqa: BLE001 — bubble error into job state
@@ -405,6 +560,8 @@ async def _run(
                     _JOBS[job_id].status = "error"
                     _JOBS[job_id].error = error_text
                     _JOBS[job_id].finished_at = finished_at
+                    # 主检测都失败了,深测不会执行。
+                    _JOBS[job_id].deep_status = "skipped"
 
             await _persist(
                 job_id,
@@ -421,6 +578,8 @@ async def _run(
                 error=error_text,
                 credential_id=credential_id,
                 credential_name=credential_name,
+                exchanges=exchanges,
+                deep_status="skipped",
             )
 
             bus.publish(
@@ -429,7 +588,8 @@ async def _run(
                 {"job_id": job_id, "error": error_text},
             )
         finally:
-            # 成功/失败都走这一条，保证订阅者只收到一个关闭哨兵。
+            # 成功/失败/异常都走到这里:先撤销采集回调,再发关闭哨兵。
+            trace.reset_collector(token)
             bus.close(job_id)
 
 
@@ -467,6 +627,9 @@ async def _persist(
     error: str | None = None,
     credential_id: str | None = None,
     credential_name: str | None = None,
+    exchanges: list[dict[str, Any]] | None = None,
+    deep_report: dict[str, Any] | None = None,
+    deep_status: str | None = None,
 ) -> None:
     """终态入库；任何异常只打 warning，绝不影响 Job 状态与 SSE。"""
     from . import repository
@@ -502,6 +665,9 @@ async def _persist(
             failed_probes=failed_probes,
             credential_id=credential_id,
             credential_name=credential_name,
+            exchanges=exchanges,
+            deep_report=deep_report,
+            deep_status=deep_status,
         )
     except Exception as e:  # noqa: BLE001 — 落库失败不能拖垮作业
         logger.warning("db persist failed: %s", e)
@@ -514,6 +680,7 @@ async def _run_anthropic(
     cfg: ExecutionConfig,
     *,
     on_event: ProgressCallback | None = None,
+    only: set[str] | None = None,
 ):
     from relay_detector.protocols.anthropic import (
         build_detectors,
@@ -523,7 +690,7 @@ async def _run_anthropic(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model, on_event=on_event)
+        return await runner.run(model, on_event=on_event, only=only)
 
 
 async def _run_openai(
@@ -533,6 +700,7 @@ async def _run_openai(
     cfg: ExecutionConfig,
     *,
     on_event: ProgressCallback | None = None,
+    only: set[str] | None = None,
 ):
     from relay_detector.protocols.openai import (
         build_detectors,
@@ -542,7 +710,7 @@ async def _run_openai(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model, on_event=on_event)
+        return await runner.run(model, on_event=on_event, only=only)
 
 
 async def _run_gemini(
@@ -552,6 +720,7 @@ async def _run_gemini(
     cfg: ExecutionConfig,
     *,
     on_event: ProgressCallback | None = None,
+    only: set[str] | None = None,
 ):
     from relay_detector.protocols.gemini import (
         build_detectors,
@@ -561,4 +730,4 @@ async def _run_gemini(
 
     async with make_client(base_url, api_key, timeout=cfg.request_timeout_s) as client:
         runner = build_runner(client, build_detectors(cfg.mode), cfg)
-        return await runner.run(model, on_event=on_event)
+        return await runner.run(model, on_event=on_event, only=only)
