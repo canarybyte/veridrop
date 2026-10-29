@@ -17,6 +17,7 @@ from relay_detector.core.long_context import (
 from relay_detector.core.models import ExecutionConfig, Mode
 from relay_detector.protocols.openai.detectors.long_context import (
     LongContextDetector,
+    LongContextExtremeDetector,
 )
 
 
@@ -481,7 +482,7 @@ async def test_long_context_extreme_uses_adaptive_tiers_for_1m_model():
     the WHOLE POINT of extreme mode — without it big models are tested at
     only 20% of advertised capacity, which lets a "1M-claimed but capped
     at 256k" relay slip through with a green badge."""
-    det = LongContextDetector()
+    det = LongContextExtremeDetector()
     det.config = ExecutionConfig.for_mode(
         Mode.FULL,
         include_long_context=False,
@@ -536,7 +537,7 @@ async def test_long_context_passes_timeout_to_client():
     detector plumbs request_timeout_s through to the client call. Without
     this kwarg, httpx 30s timeout would kill any 200k+ probe regardless
     of model speed."""
-    det = LongContextDetector()
+    det = LongContextExtremeDetector()
     det.config = ExecutionConfig.for_mode(
         Mode.FULL, include_long_context_extreme=True,
     )
@@ -568,7 +569,7 @@ async def test_long_context_429_treated_as_rate_limited_not_truncation():
     raises HTTP 429 — which is RATE LIMITING, not truncation. Marking it
     fail would falsely flag a compliant relay. This is the bug we caught
     in live validation 2026-05-05 ($0.22 worth)."""
-    det = LongContextDetector()
+    det = LongContextExtremeDetector()
     det.config = ExecutionConfig.for_mode(
         Mode.FULL, include_long_context_extreme=True,
     )
@@ -732,10 +733,9 @@ def test_looks_rate_limited_catches_known_patterns():
 
 
 @pytest.mark.asyncio
-async def test_long_context_extreme_implies_standard():
-    """If both flags are set, extreme wins (it's a superset). If only
-    extreme is set, the detector still runs (extreme acts as enabler)."""
-    det = LongContextDetector()
+async def test_long_context_extreme_runs_with_extreme_flag():
+    """extreme 探针只靠 include_long_context_extreme 即可启用（不要求标准开关）。"""
+    det = LongContextExtremeDetector()
     det.config = ExecutionConfig.for_mode(
         Mode.FULL,
         include_long_context=False,

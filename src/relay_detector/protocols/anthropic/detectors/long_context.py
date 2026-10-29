@@ -152,15 +152,14 @@ class LongContextDetector(ActiveDetector):
     weight = 15.0  # heavy — context-window fraud is among the worst lies
     category = "capability"
     description = "针探长上下文窗口是否真如宣称"
+    # 档位由探测器本身决定：False=固定标准档，子类 LongContextExtremeDetector 为 True。
+    extreme: bool = False
 
     async def run(self, client, model: str) -> DetectorResult:
-        # Opt-in gate. include_long_context_extreme is the superset (uses
-        # adaptive tiers up to model's advertised limit), so it implies
-        # the standard one — checking either is enough to enable.
+        # Opt-in gate: 只要任一长上下文开关开启即可运行（由任务层按勾选设置）。
         cfg = self.config
-        opt_in_standard = bool(cfg and cfg.include_long_context)
-        opt_in_extreme = bool(cfg and cfg.include_long_context_extreme)
-        if not (opt_in_standard or opt_in_extreme):
+        opt_in = bool(cfg and (cfg.include_long_context or cfg.include_long_context_extreme))
+        if not opt_in:
             return self.skip(
                 "长上下文检测为可选项,需在请求时勾选(标准档 $0.05–$0.50 / 极限档 $0.05–$8)"
             )
@@ -172,10 +171,9 @@ class LongContextDetector(ActiveDetector):
         reached_tier: int | None = None
 
         ctx_limit = model_context_limit(model)
-        # Extreme strategy: adaptive tiers up to ctx_limit (e.g. 32k →
-        # 500k → 950k for a 1M model). Standard: hardcoded (32k, 100k,
-        # 200k). Extreme wins when both are checked.
-        if opt_in_extreme:
+        # Extreme: adaptive tiers up to ctx_limit (e.g. 32k → 500k → 950k
+        # for a 1M model). Standard: hardcoded (32k, 100k, 200k).
+        if self.extreme:
             tier_set = tiers_for_model(ctx_limit)
             tier_strategy = "extreme"
         else:
@@ -471,6 +469,18 @@ class LongContextDetector(ActiveDetector):
             "sizing_iterations": sizing_iterations,
             "response_text_preview": text[:400],
         }
+
+
+class LongContextExtremeDetector(LongContextDetector):
+    """极限档：按模型上限逐级加压（费用高、耗时长），需单独勾选。
+
+    不加入 DETECTOR_WEIGHTS / MODE_DETECTORS，因此 CLI 的 full 模式不会自动运行它。
+    """
+
+    name = "long_context_extreme"
+    display_name = "长上下文极限档"
+    description = "按模型上限逐级加压，费用与耗时高，需单独勾选"
+    extreme = True
 
 
 def _aggregate(tier_results: list[dict]) -> tuple[float, str, str]:

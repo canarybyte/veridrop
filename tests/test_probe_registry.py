@@ -22,6 +22,12 @@ _EXTRA_DETECTOR_CLASSES: dict[str, tuple[tuple[str, str], ...]] = {
     "openai": (("token_parity", "TokenParityDetector"),),
 }
 
+# 仅由用户手动勾选、刻意不进入任何 mode 的探测器(费用高，full 模式不自动运行)。
+_MODE_EXEMPT: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"long_context_extreme"}),
+    "openai": frozenset({"long_context_extreme"}),
+}
+
 # 分类映射的「唯一定义」快照;与探测器类上的 category 必须逐项一致。
 EXPECTED_CATEGORIES: dict[str, dict[str, str]] = {
     "anthropic": {
@@ -32,6 +38,7 @@ EXPECTED_CATEGORIES: dict[str, dict[str, str]] = {
         "pdf": "capability",
         "structured_output": "capability",
         "long_context": "capability",
+        "long_context_extreme": "capability",
         "consistency": "consistency",
         "integrity": "consistency",
         "protocol": "basic",
@@ -44,6 +51,7 @@ EXPECTED_CATEGORIES: dict[str, dict[str, str]] = {
         "function_calling": "capability",
         "structured_output": "capability",
         "long_context": "capability",
+        "long_context_extreme": "capability",
         "integrity": "consistency",
         "model_consistency": "consistency",
         "token_parity": "consistency",
@@ -103,9 +111,11 @@ def test_detector_metadata_is_complete(protocol: str) -> None:
         missing = set(members) - known
         assert not missing, f"{protocol}.{mode.value} 引用了不存在的探测器: {missing}"
 
-    # 每个注册的探测器至少出现在一个 mode 中。
+    # 每个注册的探测器至少出现在一个 mode 中（手动勾选专用的除外）。
     covered = set().union(*mode_detectors.values())
     for name in names:
+        if name in _MODE_EXEMPT.get(protocol, frozenset()):
+            continue
         assert name in covered, f"{protocol}.{name} 不属于任何 mode"
 
     for d in detectors:

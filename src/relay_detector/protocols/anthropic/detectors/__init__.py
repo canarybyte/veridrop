@@ -11,7 +11,7 @@ from .consistency import ConsistencyDetector
 from .identity import IdentityDetector
 from .integrity import IntegrityDetector
 from .knowledge import KnowledgeDetector
-from .long_context import LongContextDetector
+from .long_context import LongContextDetector, LongContextExtremeDetector
 from .message_id import MessageIDDetector
 from .pdf import PDFDetector
 from .protocol import ProtocolDetector
@@ -35,6 +35,7 @@ def build_all() -> list[BaseDetector]:
         TokenUsageDetector(),
         MessageIDDetector(),
         LongContextDetector(),
+        LongContextExtremeDetector(),
     ]
 
 
@@ -54,5 +55,6 @@ __all__ = [
     "TokenUsageDetector",
     "MessageIDDetector",
     "LongContextDetector",
+    "LongContextExtremeDetector",
     "build_all",
 ]

@@ -34,8 +34,6 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
   const [batchMode, setBatchMode] = useState(false);
   const [batchModels, setBatchModels] = useState<string[]>([]);
   const [selectedProbes, setSelectedProbes] = useState<string[]>([]);
-  const [includeLongContext, setIncludeLongContext] = useState(false);
-  const [includeExtreme, setIncludeExtreme] = useState(false);
   const [deepEnabled, setDeepEnabled] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +52,6 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
   const effectiveModel = batchMode ? (batchModels[0] ?? "") : trimmedModel;
   const protocol = guessProtocol(effectiveModel);
   const canStart = Boolean(selectedId) && (batchMode ? batchModels.length > 0 : Boolean(trimmedModel));
-  const longContextProbeSelected = selectedProbes.includes("long_context");
 
   // 探针集合随协议变化，切到其他协议时清空已选探针，要求重新勾选。
   const previousProtocol = useRef(protocol);
@@ -63,11 +60,6 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
     previousProtocol.current = protocol;
     setSelectedProbes([]);
   }, [protocol]);
-
-  // 显式选中 long_context 时自动打开长上下文开关；用户仍可手动关闭。
-  useEffect(() => {
-    if (longContextProbeSelected) setIncludeLongContext(true);
-  }, [longContextProbeSelected]);
 
   const loadCredentials = useCallback(async () => {
     setCredentialsLoading(true);
@@ -138,8 +130,6 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
         const response = await submitBatchDetection({
           credential_id: selectedId,
           models: batchModels,
-          include_long_context: includeLongContext,
-          include_long_context_extreme: includeExtreme,
           deep: deepEnabled,
           probes: selectedProbes,
         });
@@ -149,8 +139,6 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
       const response = await submitDetection({
         credential_id: selectedId,
         model: trimmedModel,
-        include_long_context: includeLongContext,
-        include_long_context_extreme: includeExtreme,
         deep: deepEnabled,
         probes: selectedProbes,
       });
@@ -281,36 +269,7 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
         : null}
 
       <div className="field">
-        <span className="field-label">扩展检测</span>
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={includeLongContext}
-            disabled={pending}
-            onChange={(event) => {
-              setIncludeLongContext(event.target.checked);
-              if (!event.target.checked) setIncludeExtreme(false);
-            }}
-          />
-          <span>长上下文探针</span>
-        </label>
-        {longContextProbeSelected && !includeLongContext ? (
-          <span className="field-hint">
-            已选中 long_context 探针，关闭此开关后后端仍会按探针选择启用长上下文。
-          </span>
-        ) : null}
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={includeExtreme}
-            disabled={pending}
-            onChange={(event) => {
-              setIncludeExtreme(event.target.checked);
-              if (event.target.checked) setIncludeLongContext(true);
-            }}
-          />
-          <span>超长上下文（extreme）</span>
-        </label>
+        <span className="field-label">深度诊断</span>
         <label className="check-row">
           <input
             type="checkbox"
@@ -318,7 +277,7 @@ export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: 
             disabled={pending}
             onChange={(event) => setDeepEnabled(event.target.checked)}
           />
-          <span>深度诊断（13–25 项）</span>
+          <span>检测完成后自动深度诊断（13–25 项）</span>
         </label>
         <span className="field-hint">
           额外约 20+ 次请求、短时采样，默认关闭；结论为启发式，不等同官方计费。

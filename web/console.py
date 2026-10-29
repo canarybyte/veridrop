@@ -472,11 +472,9 @@ class DetectRequest(BaseModel):
 
     credential_id: str = Field(min_length=1)
     model: str = Field(min_length=1)
-    include_long_context: bool = False
-    include_long_context_extreme: bool = False
     # 深度诊断(13–25 项)手动开关,默认关闭。
     deep: bool = False
-    # 用户手动勾选的探针名;缺失或空列表由路由层统一返回 422。
+    # 用户手动勾选的探针名（含长上下文标准档/极限档）；缺失或空列表由路由层统一返回 422。
     probes: list[str] = Field(default_factory=list)
 
     @field_validator("credential_id", "model")
@@ -494,8 +492,6 @@ class BatchDetectRequest(BaseModel):
 
     credential_id: str = Field(min_length=1)
     models: list[str] = Field(default_factory=list)
-    include_long_context: bool = False
-    include_long_context_extreme: bool = False
     deep: bool = False
     probes: list[str] = Field(default_factory=list)
 
@@ -742,8 +738,6 @@ async def app_detect(payload: DetectRequest) -> dict[str, str]:
         plain_key,
         payload.model,
         protocol=protocol,
-        include_long_context=payload.include_long_context,
-        include_long_context_extreme=payload.include_long_context_extreme,
         credential_id=credential["id"],
         credential_name=credential["name"],
         deep=payload.deep,
@@ -785,8 +779,6 @@ async def app_detect_batch(payload: BatchDetectRequest) -> dict[str, Any]:
             plain_key,
             model,
             protocol=protocol,
-            include_long_context=payload.include_long_context,
-            include_long_context_extreme=payload.include_long_context_extreme,
             credential_id=credential["id"],
             credential_name=credential["name"],
             deep=payload.deep,

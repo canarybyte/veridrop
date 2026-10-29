@@ -7,7 +7,7 @@ from .azure_model_echo import AzureModelEchoDetector
 from .basic_request import BasicRequestDetector
 from .function_calling import FunctionCallingDetector
 from .integrity import IntegrityDetector
-from .long_context import LongContextDetector
+from .long_context import LongContextDetector, LongContextExtremeDetector
 from .model_consistency import ModelConsistencyDetector
 from .protocol import ProtocolDetector
 from .structured_output import StructuredOutputDetector
@@ -24,6 +24,7 @@ def build_all() -> list[BaseDetector]:
         IntegrityDetector(),
         TokenBillingDetector(),
         LongContextDetector(),
+        LongContextExtremeDetector(),
         AzureApiVersionDetector(),
         AzureContentFilterDetector(),
         AzureModelEchoDetector(),
@@ -42,6 +43,7 @@ __all__ = [
     "IntegrityDetector",
     "TokenBillingDetector",
     "LongContextDetector",
+    "LongContextExtremeDetector",
     "AzureApiVersionDetector",
     "AzureContentFilterDetector",
     "AzureModelEchoDetector",

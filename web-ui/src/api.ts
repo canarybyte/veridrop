@@ -10,8 +10,6 @@ export type Protocol = "anthropic" | "openai" | "gemini";
 export interface DetectRequest {
   credential_id: string;
   model: string;
-  include_long_context: boolean;
-  include_long_context_extreme: boolean;
   /** 主检测完成后追加深度诊断（13–25 项），默认 false。 */
   deep: boolean;
   /** 用户手动勾选的探针名，至少一个（后端会拒绝空数组）。 */

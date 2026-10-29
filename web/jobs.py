@@ -417,16 +417,18 @@ async def _run(
         token = trace.set_collector(_collect_exchange)
 
         try:
+            # 只跑用户手动勾选的探针。旧表单的“超长上下文”开关等价于勾选极限档。
+            only = set(selected_probes)
+            if include_long_context_extreme and "long_context" in only:
+                only = (only - {"long_context"}) | {"long_context_extreme"}
             cfg = ExecutionConfig(
                 max_concurrent=3, overall_timeout_s=_OVERALL_TIMEOUT_S
             )
-            cfg.include_long_context = include_long_context
-            cfg.include_long_context_extreme = include_long_context_extreme
-            # 显式勾选了长上下文探针时,自动打开 include_long_context:用户
-            # 勾选即视为授权这次昂贵探测,不再要求额外勾复选框。
-            selects_long_context = "long_context" in selected_probes
-            if selects_long_context:
-                cfg.include_long_context = True
+            # 长上下文开关由勾选的探针决定：标准档 / 极限档各自独立。
+            cfg.include_long_context = bool(
+                include_long_context or only & {"long_context", "long_context_extreme"}
+            )
+            cfg.include_long_context_extreme = "long_context_extreme" in only
             # Long-context probes blow past the regular wall-clock budget
             # (60–180s). 1M-token requests alone take 2–4 minutes
             # upstream; the extreme path may also sleep 75s per tier waiting
@@ -434,12 +436,8 @@ async def _run(
             # rate-limited probes (see _probe_tier_with_tpm_retry).
             # Without this bump asyncio.wait_for kills the runner
             # mid-detector and the user gets a misleading "fail" instead.
-            if include_long_context_extreme or selects_long_context:
+            if only & {"long_context", "long_context_extreme"}:
                 cfg.overall_timeout_s = max(cfg.overall_timeout_s, 900.0)
-            elif include_long_context:
-                cfg.overall_timeout_s = max(cfg.overall_timeout_s, 300.0)
-            # 只跑用户手动勾选的探针。
-            only = set(selected_probes)
             if protocol == "openai":
                 outcome = await _run_openai(
                     base_url, api_key, model, cfg, on_event=on_event, only=only
