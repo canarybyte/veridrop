@@ -48,6 +48,9 @@ EXPECTED_CATEGORIES: dict[str, dict[str, str]] = {
         "model_consistency": "consistency",
         "token_parity": "consistency",
         "token_billing": "billing",
+        "azure_api_version": "azure",
+        "azure_content_filter": "azure",
+        "azure_model_echo": "azure",
     },
     "gemini": {
         "basic_request": "basic",

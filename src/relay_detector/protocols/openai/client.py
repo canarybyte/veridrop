@@ -140,11 +140,15 @@ class OpenAIChatClient:
         # don't get killed by the 30s default. Pop before _sanitize_body
         # so it never reaches the OpenAI API as a JSON field.
         timeout = body.pop("request_timeout_s", None)
+        # URL 查询参数(如 Azure 的 api-version)，不进入 JSON 请求体。
+        query_params = body.pop("query_params", None)
         body = _sanitize_body(body)
         start = time.perf_counter()
         kwargs: dict[str, Any] = {"json": body}
         if timeout is not None:
             kwargs["timeout"] = float(timeout)
+        if query_params:
+            kwargs["params"] = query_params
         resp = await self._client.post("/chat/completions", **kwargs)
         latency_ms = int((time.perf_counter() - start) * 1000)
         if resp.status_code >= 400:

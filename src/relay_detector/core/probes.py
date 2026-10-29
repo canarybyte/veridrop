@@ -28,6 +28,10 @@ PROBE_CATEGORIES: dict[str, dict[str, str]] = {
         "label": "计费与用量",
         "description": "usage 字段真实性、token 计费一致性",
     },
+    "azure": {
+        "label": "AZ 探测",
+        "description": "Azure OpenAI 行为层特征：api-version 敏感性、内容审核真拦截、model 回显",
+    },
 }
 
 # 前端展示顺序;未知分类的探针排到最后(见 category_order_key)。

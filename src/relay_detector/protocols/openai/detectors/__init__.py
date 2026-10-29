@@ -1,6 +1,9 @@
 """OpenAI Chat Completions detector registry."""
 
 from .base import ActiveDetector, BaseDetector, PassiveDetector
+from .azure_api_version import AzureApiVersionDetector
+from .azure_content_filter import AzureContentFilterDetector
+from .azure_model_echo import AzureModelEchoDetector
 from .basic_request import BasicRequestDetector
 from .function_calling import FunctionCallingDetector
 from .integrity import IntegrityDetector
@@ -21,6 +24,9 @@ def build_all() -> list[BaseDetector]:
         IntegrityDetector(),
         TokenBillingDetector(),
         LongContextDetector(),
+        AzureApiVersionDetector(),
+        AzureContentFilterDetector(),
+        AzureModelEchoDetector(),
     ]
 
 
@@ -36,5 +42,8 @@ __all__ = [
     "IntegrityDetector",
     "TokenBillingDetector",
     "LongContextDetector",
+    "AzureApiVersionDetector",
+    "AzureContentFilterDetector",
+    "AzureModelEchoDetector",
     "build_all",
 ]

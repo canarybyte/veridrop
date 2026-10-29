@@ -17,6 +17,10 @@ DETECTOR_WEIGHTS: dict[str, float] = {
     # one of the highest-impact lies a relay can tell. Skipped (0 effective
     # weight) when ExecutionConfig.include_long_context is False.
     "long_context": 15.0,
+    # AZ 探测:行为层 Azure 特征,仅 full 模式执行(见 MODE_DETECTORS)。
+    "azure_api_version": 15.0,
+    "azure_content_filter": 15.0,
+    "azure_model_echo": 10.0,
 }
 
 
