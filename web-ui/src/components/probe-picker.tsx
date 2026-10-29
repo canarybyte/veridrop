@@ -201,7 +201,6 @@ export function ProbePicker({
           <div className="probe-vendor-tabs" role="tablist" aria-label="厂商">
             {VENDOR_TABS.map((tab) => {
               const active = tab.id === vendor;
-              const current = tab.id === protocol;
               return (
                 <button
                   key={tab.id}
@@ -212,7 +211,6 @@ export function ProbePicker({
                   onClick={() => setVendor(tab.id)}
                 >
                   {tab.label}
-                  {current ? <span className="probe-vendor-badge">当前模型</span> : null}
                 </button>
               );
             })}
