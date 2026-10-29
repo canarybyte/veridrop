@@ -57,9 +57,8 @@ export function ProbePicker({
   const [error, setError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [expanded, setExpanded] = useState(true);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => new Set()
-  );
+  // 分类默认全部收起，这里记录用户手动展开的分类 id。
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
   const requestRef = useRef(0);
 
   useEffect(() => {
@@ -170,7 +169,7 @@ export function ProbePicker({
   };
 
   const toggleGroup = (groupId: string) => {
-    setCollapsedGroups((prev) => {
+    setOpenGroups((prev) => {
       const next = new Set(prev);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
@@ -266,7 +265,7 @@ export function ProbePicker({
           {catalog && groups.length > 0 ? (
             <div className="probe-picker-scroll">
               {groups.map((group) => {
-                const open = !collapsedGroups.has(group.id);
+                const open = openGroups.has(group.id);
                 const groupSelected = group.items.reduce(
                   (count, item) => (selectedSet.has(item.name) ? count + 1 : count),
                   0

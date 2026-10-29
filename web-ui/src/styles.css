@@ -193,6 +193,15 @@ code,
   padding: 24px;
 }
 
+/* 控制台是三栏宽屏页面：页头与主体同步加宽，避免两侧留白过多。 */
+body:has(.console-layout) .app-header-inner {
+  max-width: 1600px;
+}
+
+body:has(.console-layout) .app-main {
+  max-width: 1600px;
+}
+
 .page {
   display: flex;
   flex-direction: column;
@@ -232,17 +241,24 @@ code,
 
 /* ---------- 三栏布局 ---------- */
 
+/* 三栏等高、底边对齐；每栏内容超出时在栏内滚动，页面整体高度保持稳定。 */
 .console-layout {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 400px;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 190px);
+  min-height: 600px;
 }
 
 .console-col-left,
 .console-col-center,
 .console-col-right {
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 /* 右栏纵向分块：结论 / 探针选择 / 探针，块间用分隔线区隔。 */
@@ -252,14 +268,17 @@ code,
   border-top: 1px solid var(--border);
 }
 
-/* 中栏只承载运行日志，给个最小高度避免塌成一条。 */
-.console-col-center {
-  min-height: 260px;
-}
-
 @media (max-width: 1199px) {
   .console-layout {
     grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+  }
+
+  .console-col-left,
+  .console-col-center,
+  .console-col-right {
+    overflow: visible;
   }
 }
 
