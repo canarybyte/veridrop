@@ -2603,6 +2603,17 @@ body:has(.console-layout) .app-main {
 
 
 /* 历史记录列表 */
+.batch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-panel .panel-head {
+  flex-wrap: wrap;
+}
+
 .history-panel {
   margin-top: 18px;
   padding-top: 16px;

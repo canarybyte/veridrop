@@ -49,6 +49,11 @@ export interface ModelPickerProps {
   credentialId: string;
   selectedModel: string;
   onSelectModel: (model: string) => void;
+  /** 批量模式：开启后列表改为多选复选框，选中项写入 batchModels。 */
+  batchMode: boolean;
+  onBatchModeChange: (next: boolean) => void;
+  batchModels: string[];
+  onBatchModelsChange: (next: string[]) => void;
   disabled?: boolean;
 }
 
@@ -56,6 +61,10 @@ export function ModelPicker({
   credentialId,
   selectedModel,
   onSelectModel,
+  batchMode,
+  onBatchModeChange,
+  batchModels,
+  onBatchModelsChange,
   disabled = false,
 }: ModelPickerProps) {
   const [models, setModels] = useState<ModelsResponse | null>(null);
@@ -122,6 +131,8 @@ export function ModelPicker({
   const handleProtocolChange = (protocol: Protocol) => {
     setActiveProtocol(protocol);
     setQuery("");
+    // 探针集合按协议区分，批量选择不能跨协议保留。
+    if (batchMode) onBatchModelsChange([]);
     if (!models || !selectedModel) return;
     const list = models.by_protocol[protocol] ?? [];
     if (list.includes(selectedModel)) return;
@@ -137,6 +148,19 @@ export function ModelPicker({
         onSelectModel(bestOf(models, activeProtocol) ?? "");
       }
     }
+  };
+
+  const handleBatchToggle = (next: boolean) => {
+    if (next) setManual(false);
+    onBatchModeChange(next);
+  };
+
+  const toggleBatchItem = (item: string) => {
+    onBatchModelsChange(
+      batchModels.includes(item)
+        ? batchModels.filter((value) => value !== item)
+        : [...batchModels, item]
+    );
   };
 
   const manualHint = selectedModel.trim()
@@ -191,17 +215,44 @@ export function ModelPicker({
         </div>
       ) : null}
 
-      <label className="check-row">
-        <input
-          type="checkbox"
-          checked={manual}
-          disabled={disabled}
-          onChange={(event) => handleManualToggle(event.target.checked)}
-        />
-        <span>手动输入模型</span>
-      </label>
+      {!batchMode ? (
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={manual}
+            disabled={disabled}
+            onChange={(event) => handleManualToggle(event.target.checked)}
+          />
+          <span>手动输入模型</span>
+        </label>
+      ) : null}
 
-      {manual ? (
+      {models && !endpointUnsupported && !manual ? (
+        <div className="probe-vendor-tabs" role="tablist" aria-label="模型选择方式">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!batchMode}
+            className={`probe-vendor-tab${!batchMode ? " is-active" : ""}`}
+            disabled={disabled}
+            onClick={() => handleBatchToggle(false)}
+          >
+            单个模型
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={batchMode}
+            className={`probe-vendor-tab${batchMode ? " is-active" : ""}`}
+            disabled={disabled}
+            onClick={() => handleBatchToggle(true)}
+          >
+            批量模型
+          </button>
+        </div>
+      ) : null}
+
+      {manual && !batchMode ? (
         <>
           <input
             className="input"
@@ -256,25 +307,67 @@ export function ModelPicker({
             onChange={(event) => setQuery(event.target.value)}
           />
 
+          {batchMode ? (
+            <div className="batch-toolbar">
+              <span className="field-hint">
+                可勾选多个，每个模型各跑一次。已选 {batchModels.length} 个
+              </span>
+              <button
+                type="button"
+                className="probe-picker-btn"
+                disabled={disabled || shown.length === 0}
+                onClick={() => onBatchModelsChange(Array.from(new Set([...batchModels, ...shown])))}
+              >
+                全选当前列表
+              </button>
+              <button
+                type="button"
+                className="probe-picker-btn"
+                disabled={disabled || batchModels.length === 0}
+                onClick={() => onBatchModelsChange([])}
+              >
+                清空
+              </button>
+            </div>
+          ) : null}
+
           {shown.length > 0 ? (
-            <div className="model-list" role="radiogroup" aria-label="选择模型">
-              {shown.map((item) => (
-                <label
-                  key={item}
-                  className={`model-option${item === selectedModel ? " is-selected" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name="credential-model"
-                    value={item}
-                    checked={item === selectedModel}
-                    disabled={disabled}
-                    onChange={() => onSelectModel(item)}
-                  />
-                  <span className="model-name">{item}</span>
-                  {item === best ? <span className="chip chip-primary">建议</span> : null}
-                </label>
-              ))}
+            <div
+              className="model-list"
+              role={batchMode ? "group" : "radiogroup"}
+              aria-label="选择模型"
+            >
+              {shown.map((item) => {
+                const checkedInBatch = batchModels.includes(item);
+                const selected = batchMode ? checkedInBatch : item === selectedModel;
+                return (
+                  <label
+                    key={item}
+                    className={`model-option${selected ? " is-selected" : ""}`}
+                  >
+                    {batchMode ? (
+                      <input
+                        type="checkbox"
+                        value={item}
+                        checked={checkedInBatch}
+                        disabled={disabled}
+                        onChange={() => toggleBatchItem(item)}
+                      />
+                    ) : (
+                      <input
+                        type="radio"
+                        name="credential-model"
+                        value={item}
+                        checked={item === selectedModel}
+                        disabled={disabled}
+                        onChange={() => onSelectModel(item)}
+                      />
+                    )}
+                    <span className="model-name">{item}</span>
+                    {item === best ? <span className="chip chip-primary">建议</span> : null}
+                  </label>
+                );
+              })}
             </div>
           ) : (
             <div className="model-empty">
@@ -292,7 +385,7 @@ export function ModelPicker({
         </>
       ) : null}
 
-      {selectedModel.trim() ? (
+      {batchMode ? null : selectedModel.trim() ? (
         <div className="model-selected">
           已选：<code>{selectedModel.trim()}</code>
         </div>

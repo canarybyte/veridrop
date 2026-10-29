@@ -486,6 +486,33 @@ class DetectRequest(BaseModel):
         return _strip_nonempty(value)
 
 
+MAX_BATCH_MODELS = 20
+
+
+class BatchDetectRequest(BaseModel):
+    """批量检测：同一凭据、同一套探针，依次为每个模型起一个独立任务。"""
+
+    credential_id: str = Field(min_length=1)
+    models: list[str] = Field(default_factory=list)
+    include_long_context: bool = False
+    include_long_context_extreme: bool = False
+    deep: bool = False
+    probes: list[str] = Field(default_factory=list)
+
+    @field_validator("credential_id")
+    @classmethod
+    def _strip_required(cls, value: str) -> str:
+        return _strip_nonempty(value)
+
+    @field_validator("models")
+    @classmethod
+    def _check_models(cls, value: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(_strip_nonempty(item) for item in value))
+        if not 1 <= len(cleaned) <= MAX_BATCH_MODELS:
+            raise ValueError(f"models must contain 1-{MAX_BATCH_MODELS} items")
+        return cleaned
+
+
 class CredentialCreate(BaseModel):
     """新建凭据的请求体；api_key 只在此处出现一次,之后只存密文与掩码。"""
 
@@ -723,6 +750,50 @@ async def app_detect(payload: DetectRequest) -> dict[str, str]:
         selected_probes=selected_probes,
     )
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/app/api/detect/batch")
+async def app_detect_batch(payload: BatchDetectRequest) -> dict[str, Any]:
+    """为多个模型各起一个检测任务；全部校验通过后才提交，避免部分启动。"""
+    credential = await _load_credential_secret(payload.credential_id)
+    if credential is None:
+        raise HTTPException(status_code=404, detail="credential not found")
+
+    try:
+        plain_key = decrypt_api_key(credential["api_key_enc"])
+    except CredentialDecryptError:
+        raise HTTPException(
+            status_code=503, detail="credential cannot be decrypted"
+        )
+
+    protocols = {_protocol_from_model(model) for model in payload.models}
+    if len(protocols) > 1:
+        raise HTTPException(
+            status_code=422, detail="批量检测的模型必须属于同一协议（同一探针集合）"
+        )
+
+    plans: list[tuple[str, str, list[str]]] = []
+    for model in payload.models:
+        protocol = _protocol_from_model(model)
+        selected = _validate_selected_probes(payload.probes, protocol, model)
+        plans.append((model, protocol, selected))
+
+    items: list[dict[str, str]] = []
+    for model, protocol, selected_probes in plans:
+        job_id = await jobs.submit(
+            credential["base_url"],
+            plain_key,
+            model,
+            protocol=protocol,
+            include_long_context=payload.include_long_context,
+            include_long_context_extreme=payload.include_long_context_extreme,
+            credential_id=credential["id"],
+            credential_name=credential["name"],
+            deep=payload.deep,
+            selected_probes=selected_probes,
+        )
+        items.append({"model": model, "job_id": job_id})
+    return {"items": items}
 
 
 @router.get("/app/api/detect/{job_id}")

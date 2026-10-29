@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { BatchPanel } from "../components/batch-panel";
 import { ConfigForm } from "../components/config-form";
 import { DeepPanel } from "../components/deep-panel";
 import { EventLog } from "../components/event-log";
@@ -7,6 +8,7 @@ import { HistoryPanel } from "../components/history-panel";
 import { ProbeGrid } from "../components/probe-grid";
 import { ScorePanel } from "../components/score-panel";
 import { useDetectionStream } from "../hooks/use-detection-stream";
+import type { BatchDetectItem } from "../api";
 import { startReportDeep } from "../api";
 
 export default function ConsolePage() {
@@ -14,6 +16,7 @@ export default function ConsolePage() {
   // 当前展示内容对应的历史记录 id（深测任务不是记录，需单独记住源记录）。
   const [reportId, setReportId] = useState<string | null>(null);
   const [credentialId, setCredentialId] = useState("");
+  const [batchItems, setBatchItems] = useState<BatchDetectItem[] | null>(null);
   const [deepStarting, setDeepStarting] = useState(false);
   const [deepError, setDeepError] = useState<string | null>(null);
   // 中栏视图：探针 / 深度诊断，通过页签切换。
@@ -33,15 +36,31 @@ export default function ConsolePage() {
   const handleStart = (nextJobId: string) => {
     // jobId 变化会让 hook 先重置上一轮状态，再订阅新的任务流。
     setDeepError(null);
+    setBatchItems(null);
     setReportId(nextJobId);
     setJobId(nextJobId);
   };
 
-  // 选中历史记录：记下它的 report id，供“深度诊断”按钮使用。
-  const handleSelectHistory = (nextId: string) => {
+  // 批量：每个模型一个任务，默认展示第一个，其余在批量列表里切换。
+  const handleStartBatch = (items: BatchDetectItem[]) => {
+    if (items.length === 0) return;
+    setDeepError(null);
+    setBatchItems(items);
+    setReportId(items[0].job_id);
+    setJobId(items[0].job_id);
+  };
+
+  // 切换展示的任务（批量列表内点击）：不影响批量列表本身。
+  const handleSelectBatchItem = (nextId: string) => {
     setDeepError(null);
     setReportId(nextId);
     setJobId(nextId);
+  };
+
+  // 选中历史记录：记下它的 report id，供“深度诊断”按钮使用。
+  const handleSelectHistory = (nextId: string) => {
+    setBatchItems(null);
+    handleSelectBatchItem(nextId);
   };
 
   // 对当前记录补跑深度诊断：控制台切到新深测任务的事件流，
@@ -70,6 +89,7 @@ export default function ConsolePage() {
           <ConfigForm
             busy={busy}
             onStart={handleStart}
+            onStartBatch={handleStartBatch}
             onCredentialChange={setCredentialId}
           />
           <HistoryPanel
@@ -83,6 +103,17 @@ export default function ConsolePage() {
         </aside>
 
         <section className="panel console-col-center">
+          {batchItems ? (
+            <div className="console-right-block">
+              <BatchPanel
+                key={batchItems[0].job_id}
+                items={batchItems}
+                activeJobId={jobId}
+                onSelect={handleSelectBatchItem}
+                onClose={() => setBatchItems(null)}
+              />
+            </div>
+          ) : null}
           {jobError ? (
             <div className="alert alert-danger" role="alert">
               检测失败：{jobError}

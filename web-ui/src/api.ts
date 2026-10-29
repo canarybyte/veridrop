@@ -507,6 +507,40 @@ export function submitDetection(body: DetectRequest): Promise<DetectResponse> {
   });
 }
 
+export interface BatchDetectRequest extends Omit<DetectRequest, "model"> {
+  /** 同一协议的模型列表（去重后 1–20 个）。 */
+  models: string[];
+}
+
+export interface BatchDetectItem {
+  model: string;
+  job_id: string;
+}
+
+export interface BatchDetectResponse {
+  items: BatchDetectItem[];
+}
+
+export function submitBatchDetection(body: BatchDetectRequest): Promise<BatchDetectResponse> {
+  return request<BatchDetectResponse>(`${API_PREFIX}/detect/batch`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export interface DetectStatus {
+  job_id: string;
+  status: "queued" | "running" | "done" | "error";
+  target_model: string;
+  total_score: number | null;
+  verdict: JobVerdict | null;
+  error: string | null;
+}
+
+export function getDetectStatus(jobId: string): Promise<DetectStatus> {
+  return request<DetectStatus>(`${API_PREFIX}/detect/${encodeURIComponent(jobId)}`);
+}
+
 /* ---------- SSE 解析 ---------- */
 
 const KNOWN_EVENT_TYPES: readonly DetectionEventType[] = [

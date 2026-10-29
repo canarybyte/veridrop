@@ -3,8 +3,8 @@ import type { FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 
-import type { Credential } from "../api";
-import { listCredentials, submitDetection } from "../api";
+import type { BatchDetectItem, Credential } from "../api";
+import { listCredentials, submitBatchDetection, submitDetection } from "../api";
 import { CredentialForm } from "./credential-form";
 import { ModelPicker, guessProtocol } from "./model-picker";
 import { ProbePicker } from "./probe-picker";
@@ -12,11 +12,13 @@ import { ProbePicker } from "./probe-picker";
 export interface ConfigFormProps {
   busy: boolean;
   onStart: (jobId: string) => void;
+  /** 批量检测提交成功：每个模型一个任务。 */
+  onStartBatch: (items: BatchDetectItem[]) => void;
   /** 凭据选择变化时通知父组件（历史记录据此过滤）。 */
   onCredentialChange?: (credentialId: string) => void;
 }
 
-export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProps) {
+export function ConfigForm({ busy, onStart, onStartBatch, onCredentialChange }: ConfigFormProps) {
   const [credentials, setCredentials] = useState<Credential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(true);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
@@ -29,6 +31,8 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
 
   const [showCredentialForm, setShowCredentialForm] = useState(false);
   const [model, setModel] = useState("");
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchModels, setBatchModels] = useState<string[]>([]);
   const [selectedProbes, setSelectedProbes] = useState<string[]>([]);
   const [includeLongContext, setIncludeLongContext] = useState(false);
   const [includeExtreme, setIncludeExtreme] = useState(false);
@@ -46,8 +50,10 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
   const pending = busy || submitting;
   const selectedCredential = credentials.find((item) => item.id === selectedId) ?? null;
   const trimmedModel = model.trim();
-  const protocol = guessProtocol(trimmedModel);
-  const canStart = Boolean(selectedId) && Boolean(trimmedModel);
+  // 批量模式下协议与探针集合跟随批量列表的首个模型（同一批次协议一致）。
+  const effectiveModel = batchMode ? (batchModels[0] ?? "") : trimmedModel;
+  const protocol = guessProtocol(effectiveModel);
+  const canStart = Boolean(selectedId) && (batchMode ? batchModels.length > 0 : Boolean(trimmedModel));
   const longContextProbeSelected = selectedProbes.includes("long_context");
 
   // 探针集合随协议变化，切到其他协议时清空已选探针，要求重新勾选。
@@ -88,6 +94,14 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
     setSelectedId(nextId);
     // 凭据变了，旧模型一定不属于新凭据，直接清空，由 ModelPicker 重新拉列表。
     setModel("");
+    setBatchModels([]);
+    setError(null);
+  };
+
+  const handleBatchModeChange = (next: boolean) => {
+    setBatchMode(next);
+    // 开启时把当前单选模型带入批量列表，关闭时清空。
+    setBatchModels(next && trimmedModel ? [trimmedModel] : []);
     setError(null);
   };
 
@@ -95,6 +109,7 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
     setCredentials((prev) => [created, ...prev.filter((item) => item.id !== created.id)]);
     setSelectedId(created.id);
     setModel("");
+    setBatchModels([]);
     setShowCredentialForm(false);
     setError(null);
   };
@@ -107,8 +122,8 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
       setError("请先选择或新建凭据。");
       return;
     }
-    if (!trimmedModel) {
-      setError("请选择或手动填写模型。");
+    if (batchMode ? batchModels.length === 0 : !trimmedModel) {
+      setError(batchMode ? "批量模式下请至少勾选一个模型。" : "请选择或手动填写模型。");
       return;
     }
     if (selectedProbes.length === 0) {
@@ -119,6 +134,18 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
     setError(null);
     setSubmitting(true);
     try {
+      if (batchMode) {
+        const response = await submitBatchDetection({
+          credential_id: selectedId,
+          models: batchModels,
+          include_long_context: includeLongContext,
+          include_long_context_extreme: includeExtreme,
+          deep: deepEnabled,
+          probes: selectedProbes,
+        });
+        onStartBatch(response.items);
+        return;
+      }
       const response = await submitDetection({
         credential_id: selectedId,
         model: trimmedModel,
@@ -226,6 +253,10 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
           credentialId={selectedId}
           selectedModel={model}
           onSelectModel={setModel}
+          batchMode={batchMode}
+          onBatchModeChange={handleBatchModeChange}
+          batchModels={batchModels}
+          onBatchModelsChange={setBatchModels}
           disabled={pending}
         />
       ) : (
@@ -240,7 +271,7 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
         ? createPortal(
             <ProbePicker
               protocol={protocol}
-              model={trimmedModel}
+              model={effectiveModel}
               value={selectedProbes}
               onChange={setSelectedProbes}
               disabled={pending}
@@ -305,11 +336,19 @@ export function ConfigForm({ busy, onStart, onCredentialChange }: ConfigFormProp
         type="submit"
         disabled={pending || !canStart}
       >
-        {pending ? "检测进行中…" : "开始检测"}
+        {pending
+          ? batchMode
+            ? "批量检测提交中…"
+            : "检测进行中…"
+          : batchMode
+            ? `开始批量检测（${batchModels.length} 个模型）`
+            : "开始检测"}
       </button>
       {!selectedId ? (
         <span className="field-hint">请先选择或新建凭据，才能开始检测。</span>
-      ) : !trimmedModel ? (
+      ) : batchMode && batchModels.length === 0 ? (
+        <span className="field-hint">批量模式下请至少勾选一个模型。</span>
+      ) : !batchMode && !trimmedModel ? (
         <span className="field-hint">请选择或手动填写模型。</span>
       ) : null}
     </form>
