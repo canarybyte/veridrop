@@ -15,7 +15,7 @@ the field, protocol, and cryptographic level — answering three questions:
    accounting match the official API specs?
 
 The hosted service at **[veridrop.app](https://veridrop.app)** is free,
-requires no signup, and never persists API keys. To date the community has
+requires no signup, and never writes API keys to disk in plaintext. To date the community has
 run **179,000+ public detections across 13,800+ relay providers** (as of 2026-11-24), aggregated
 into a Bayesian-weighted public leaderboard, with **~1,500–1,800 daily unique
 visitors**. Supported protocols: Anthropic Messages API, OpenAI Chat
@@ -33,7 +33,7 @@ Completions, and the Gemini OpenAI-compatible API.
 > 是否剥离了 PDF、Tool Use、Thinking、Function Calling、长上下文等关键能力,
 > 以及响应字段、流式协议、usage 计费字段是否符合官方规范。
 >
-> 线上服务：[veridrop.app](https://veridrop.app)（国内可直接访问）· 备用：[veridrop.org](https://veridrop.org)。无需注册，API key 不落盘。
+> 线上服务：[veridrop.app](https://veridrop.app)（国内可直接访问）· 备用：[veridrop.org](https://veridrop.org)。无需注册，API key 明文不落盘。
 > 也可以自托管运行,完整检测逻辑、评分权重和字段证据都在本仓库公开。
 >
 > ⭐ 如果 Veridrop 帮你识别过假中转、避过坑,欢迎给这个仓库点个 Star。
@@ -66,7 +66,7 @@ Completions, and the Gemini OpenAI-compatible API.
 
 支持三大协议:**Anthropic Messages API**、**OpenAI Chat Completions**、**Gemini OpenAI 兼容 API**。
 
-线上服务：[veridrop.app](https://veridrop.app)（国内可直接访问）· 备用：[veridrop.org](https://veridrop.org) — 免费、无需注册、API key 不落盘。
+线上服务：[veridrop.app](https://veridrop.app)（国内可直接访问）· 备用：[veridrop.org](https://veridrop.org) — 免费、无需注册、API key 明文不落盘。
 
 ---
 
@@ -376,7 +376,7 @@ skip 的检测项不参与分母。OpenAI / Gemini 协议下,任意一项 critic
 
 ## 隐私与安全
 
-- **API key 不落盘**:只存在内存中的 `Job` 对象里,跑完(成功或失败)立即清空。不写报告 JSON、不写日志、不写磁盘。
+- **API key 明文不落盘**:本仓库的自托管版本里,key 只存在内存中的 `Job` 对象里,跑完(成功或失败)立即清空。线上服务用多进程任务队列:排队和检测期间把经过认证加密的密文临时写入任务队列,任务结束立即清空。两者都不把明文写进报告 JSON、日志或磁盘。
 - **报告里 key 脱敏**:显示为 `sk-y7xU••••••0h` 形式。
 - **代码完全开源**:可审计服务端,或直接 clone 部署到自己机器上。
 - **无追踪 / 无注册**:线上服务不要求注册账号、不写 cookie、不接埋点。
