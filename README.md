@@ -56,6 +56,14 @@ Completions, and the Gemini OpenAI-compatible API.
 - 进入排名的站里，中位分 70 分以上的：Claude 80%，OpenAI 98%，Gemini 91%。
 - Claude 思维签名检测里有 13% 没有通过；进入排名的 OpenAI 中转站有 14% 至少出现过一次严重问题。
 
+指南：
+
+- [中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的](https://canarybyte.github.io/veridrop/guides/zhongzhuanzhan-jiance/)
+- [AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字](https://canarybyte.github.io/veridrop/guides/ai-zhongzhuanzhan/)
+- [Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude](https://canarybyte.github.io/veridrop/guides/claude-code-zhongzhuanzhan/)
+- [Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT](https://canarybyte.github.io/veridrop/guides/gpt-zhongzhuanzhan/)
+- [中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假](https://canarybyte.github.io/veridrop/guides/zhongzhuanzhan-jiance-yuanli/)
+
 ---
 
 一个开源的 AI API 中转站(relay / proxy)真伪与质量检测工具。给定一个 `base_url + api_key + model`,自动跑一组探针请求,把结果跟「官方真品基线」做**字段级、协议级、加密级**对比,回答三个问题:
