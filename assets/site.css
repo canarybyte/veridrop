@@ -77,3 +77,7 @@ li { margin-bottom: 6px; }
 .report-list a { font-weight: 600; font-size: 19px; text-decoration: none; }
 .report-list p { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
 .site-foot { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; padding: 22px 0 40px; }
+code { font: 14.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: color-mix(in srgb, var(--line) 45%, transparent); padding: 1px 5px; border-radius: 5px; overflow-wrap: anywhere; }
+pre { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; overflow-x: auto; margin: 14px 0 18px; }
+pre code { background: none; padding: 0; overflow-wrap: normal; }
+.prose td { white-space: normal; }

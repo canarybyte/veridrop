@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 中转站是什么、怎么挑：API 中转站五个常见的坑和实测数字 | Veridrop</title>
+<meta name="description" content="API 中转站是什么、怎么选：模型被换、GPT 背后是别家模型、token 多算、工具调用不稳、只看一次结果，五个坑各配 Veridrop 的实测占比，数据截至 2026-11-24。">
+<link rel="canonical" href="https://canarybyte.github.io/veridrop/guides/ai-zhongzhuanzhan/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="AI 中转站是什么、怎么挑：API 中转站五个常见的坑和实测数字">
+<meta property="og:description" content="中转站是什么、和官方 API 差在哪，挑的时候按什么顺序看。五个坑各配一个实测占比。">
+<meta property="og:url" content="https://canarybyte.github.io/veridrop/guides/ai-zhongzhuanzhan/">
+<meta property="og:site_name" content="Veridrop 中转站检测">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字","inLanguage":"zh-CN","datePublished":"2026-11-24","dateModified":"2026-11-24","author":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"publisher":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"mainEntityOfPage":"https://canarybyte.github.io/veridrop/guides/ai-zhongzhuanzhan/"}
+</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">Veridrop <span>中转站检测</span></a>
+    <nav aria-label="站点">
+      <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
+      <a href="https://veridrop.app/">在线检测</a>
+      <a href="https://github.com/canarybyte/veridrop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap prose">
+  <p class="kicker">指南 · AI 中转站</p>
+  <h1>AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字</h1>
+  <p class="meta">数据截至 2026-11-24（北京时间） · 来源：<a href="https://veridrop.app/">Veridrop 中转站检测</a>的公开检测报告</p>
+
+<h2>中转站是什么</h2>
+<p>API 中转站是第三方提供的模型接口。你把请求发给它，它转发给 Claude、GPT、Gemini 这些模型，再把结果返回给你。AI 中转站、Token 中转站说的是同一类服务，叫法不同。</p>
+<p>用起来和官方 API 几乎一样：在代码里，或者在 Claude Code、Codex、Cherry Studio 这类客户端里，把接口地址换成中转站的地址，填上它给的 key，就能调用模型。大多按 token 用量计费。</p>
+<p>它通常比官方便宜，也不需要海外支付。代价是多了一层你看不见的东西：请求到了中转站以后，是原样交给官方，还是换成了更便宜的模型、截短了上下文、多报了用量，从回答里很难看出来。</p>
+<p>所以挑中转站，核心不是比价格，是确认它给的东西对不对。</p>
+<p>下面五个坑，数字都来自<a href="https://veridrop.app/"><strong>Veridrop</strong> 中转站检测</a>公开的数据。它是一个<a href="https://github.com/canarybyte/veridrop">开源</a>的检测工具，截至 2026 年 11 月 24 日收录了 13,856 家中转站、179,839 份公开检测报告。</p>
+<h2>坑一：模型被换了</h2>
+<p>声称是 Claude Opus，实际给的是小模型或别家模型。这是最常见的担心，也确实存在。</p>
+<p>Claude 有一个中转站很难绕过的东西：思维签名。开启思考以后，响应里会带一段由 Anthropic 服务端生成的签名。请求被转给别的模型，就拿不到它。</p>
+<p><strong>实测数字：</strong> <strong>Veridrop</strong> 跑过的 Claude 思维签名检测里，13% 没通过。进入排名的 Claude 中转站里，中位分 70 分以上的占 80%，也就是每 5 家里有 1 家不到“通过”线。</p>
+<h2>坑二：买的是 GPT，背后是别家模型</h2>
+<p>有的中转站把 GPT 请求转给别家模型，再把响应改成 OpenAI 的格式。改格式的时候，用量字段里常会留下别家接口才有的字段。</p>
+<p><strong>实测数字：</strong> 进入排名的 OpenAI 中转站里，14% 至少出现过一次这类严重问题。OpenAI 中转站的整体分数很高，中位分 70 分以上的占 98%，所以只看分数会漏掉这一条，要单独看“有没有出现过严重问题”。</p>
+<h2>坑三：token 多算了</h2>
+<p>回答没毛病，账单比实际高。这一类最难凭感觉发现。</p>
+<p><strong>实测数字：</strong> token 数是否对得上这一项，OpenAI 协议的通过率是 60%，Claude 是 62%，是常规检测项里最低的。没通过不等于一定多扣了钱，但说明返回的数字前后对不上，值得自己核一遍账单。</p>
+<h2>坑四：工具调用不稳</h2>
+<p>只聊天感觉不出来，一接 Claude Code、Codex、Agent 这类工具就出问题：任务跑到一半报格式错误。</p>
+<p><strong>实测数字：</strong> OpenAI 协议的函数调用通过率是 91%，结构化输出是 98%；Claude 的工具调用是 95%。要接编程工具的人，挑站的时候要专门看这几项。</p>
+<h2>坑五：只看一次结果就下结论</h2>
+<p>网络超时、限流、模型临时下线，都会让一次测试失败。反过来，一次通过也说明不了太多，中转站随时可能换后端。</p>
+<p><strong>实测数字：</strong> 13,856 家里，只有 6,136 家有 2 份以上报告、进入了 <strong>Veridrop</strong> 的排名。剩下的一多半报告太少，下不了结论。</p>
+<h2>三个协议的整体情况</h2>
+<p>截至 2026 年 11 月 24 日，进入排名的站里：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>协议</th>
+<th>收录家数</th>
+<th>中位分 70 以上</th>
+<th>50 到 70</th>
+<th>50 以下</th>
+<th>出现过严重问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude</td>
+<td>5,630</td>
+<td>80%</td>
+<td>16%</td>
+<td>4%</td>
+<td>不判这一项</td>
+</tr>
+<tr>
+<td>OpenAI</td>
+<td>6,643</td>
+<td>98%</td>
+<td>2%</td>
+<td>1%</td>
+<td>14%</td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td>973</td>
+<td>91%</td>
+<td>8%</td>
+<td>1%</td>
+<td>1%</td>
+</tr>
+</tbody>
+</table></div>
+<p>Claude 协议不判“严重问题”，看的是思维签名。</p>
+<h2>挑的时候按这个顺序</h2>
+<ol>
+<li>这家站有没有 2 份以上、最近一个月内的检测报告。</li>
+<li>Claude 看思维签名的通过率；GPT 和 Gemini 看有没有出现过严重问题。</li>
+<li>要接编程工具的，看工具调用和结构化输出。</li>
+<li>用自己的 key 再测一次。</li>
+<li>先小额充值，用一段时间再加。</li>
+</ol>
+<p>前四步都可以在 <a href="https://veridrop.app/"><strong>Veridrop</strong></a> 上做：<a href="https://veridrop.app/leaderboard">中转站排行榜</a>里能看到每家站的历史报告和排名，也能填自己的地址和 key 测一次，一分钟左右出结果，免费，不用注册。</p>
+<h2>它帮不上的</h2>
+<p>推理档位被压低，目前很难直接测出来。模型是真的，只是想得少了。这一类只能结合实际用起来的感受判断。</p>
+<p>价格、客服、会不会跑路，也不在检测范围里。</p>
+
+  <div class="cta">
+    <strong>看当天的中转站排名，或者测一下自己的中转站</strong>
+    <ul class="links">
+      <li><a href="https://veridrop.app/leaderboard">AI 中转站综合榜</a></li>
+      <li><a href="https://veridrop.app/guide/api-zhongzhuanzhan">API 中转站是什么、怎么选</a></li>
+      <li><a href="https://veridrop.app/leaderboard/claude">Claude 中转站</a></li>
+      <li><a href="https://veridrop.app/leaderboard/openai">GPT 中转站</a></li>
+      <li><a href="https://veridrop.app/leaderboard/gemini">Gemini 中转站</a></li>
+      <li><a href="https://veridrop.app/">中转站检测</a></li>
+    </ul>
+  </div>
+
+  <h2>接着看</h2>
+  <ul>
+    <li><a href="../zhongzhuanzhan-jiance/">中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的</a></li>
+    <li><a href="../claude-code-zhongzhuanzhan/">Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude</a></li>
+    <li><a href="../gpt-zhongzhuanzhan/">Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT</a></li>
+    <li><a href="../zhongzhuanzhan-jiance-yuanli/">中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假</a></li>
+    <li><a href="../../reports/2026-11/">2026 年 11 月 AI 中转站实测月报</a></li>
+  </ul>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    Veridrop 中转站检测 · 数据截至 2026-11-24 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a> · <a href="../../">全部指南和月报</a>
+  </div>
+</footer>
+</body>
+</html>

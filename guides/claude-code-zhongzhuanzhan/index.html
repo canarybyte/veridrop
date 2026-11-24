@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude 中转站接 Claude Code：两个环境变量，接完怎么确认是真 Claude | Veridrop</title>
+<meta name="description" content="Claude Code 接 Claude 中转站的配置方法，以及接完以后怎么确认是真 Claude：思维签名和工具调用两项检测，Veridrop 对 5,630 家 Claude 中转站的实测数字，截至 2026-11-24。">
+<link rel="canonical" href="https://canarybyte.github.io/veridrop/guides/claude-code-zhongzhuanzhan/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Claude 中转站接 Claude Code：两个环境变量，接完怎么确认是真 Claude">
+<meta property="og:description" content="配置只要两个环境变量。接完以后看两项：思维签名和工具调用。">
+<meta property="og:url" content="https://canarybyte.github.io/veridrop/guides/claude-code-zhongzhuanzhan/">
+<meta property="og:site_name" content="Veridrop 中转站检测">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude","inLanguage":"zh-CN","datePublished":"2026-11-24","dateModified":"2026-11-24","author":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"publisher":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"mainEntityOfPage":"https://canarybyte.github.io/veridrop/guides/claude-code-zhongzhuanzhan/"}
+</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">Veridrop <span>中转站检测</span></a>
+    <nav aria-label="站点">
+      <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
+      <a href="https://veridrop.app/">在线检测</a>
+      <a href="https://github.com/canarybyte/veridrop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap prose">
+  <p class="kicker">指南 · Claude 中转站</p>
+  <h1>Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude</h1>
+  <p class="meta">数据截至 2026-11-24（北京时间） · 来源：<a href="https://veridrop.app/">Veridrop 中转站检测</a>的公开检测报告</p>
+
+<h2>接入只要两个环境变量</h2>
+<p>Claude Code 通过中转站使用，只需要设两个环境变量：</p>
+<ul>
+<li><code>ANTHROPIC_BASE_URL</code>：中转站的地址</li>
+<li><code>ANTHROPIC_AUTH_TOKEN</code>：中转站给的 key</li>
+</ul>
+<p>一般写在 <code>~/.claude/settings.json</code> 的 <code>env</code> 里：</p>
+<pre><code class="language-json">{
+  &quot;env&quot;: {
+    &quot;ANTHROPIC_BASE_URL&quot;: &quot;https://你的中转站地址&quot;,
+    &quot;ANTHROPIC_AUTH_TOKEN&quot;: &quot;你的 key&quot;
+  }
+}
+</code></pre>
+<p>改完重新打开 Claude Code，输入 <code>/status</code>，看“Anthropic base URL”一行是不是你填的地址。是，就说明配置生效了。</p>
+<p>有一点要先确认：Claude Code 走的是 Claude 的原生接口（<code>/v1/messages</code>）。只提供 OpenAI 格式接口的中转站接不上。</p>
+<h2>接上了，不等于给的是真 Claude</h2>
+<p>Claude Code 做一个任务会连续发很多次请求。中间要是被换成了别的模型，代码照样写得出来，差别很难凭感觉看出来。</p>
+<p>所以接完以后有两个问题要回答：</p>
+<ol>
+<li>背后是不是真的 Claude。</li>
+<li>工具调用稳不稳。Claude Code 读文件、改文件全靠工具调用，这一项不稳，任务会中途报错。</li>
+</ol>
+<h2>这两个问题怎么查</h2>
+<p><a href="https://veridrop.app/claude"><strong>Veridrop</strong> 中转站检测</a>测的就是 Claude Code 用的这套接口。它是一个<a href="https://github.com/canarybyte/veridrop">开源</a>的检测工具，填中转站地址、key 和模型名，一分钟左右出一份报告。</p>
+<p>和 Claude Code 直接相关的两项：</p>
+<p><strong>思维签名。</strong> Claude 开启思考以后，响应里会带一段签名，由 Anthropic 服务端生成。中转站把请求转给别的模型，就拿不到它。这是判断“是不是真 Claude”最直接的一项，在 <strong>Veridrop</strong> 的 Claude 检测里权重最高。</p>
+<p><strong>工具调用。</strong> 强制模型调用一次工具，看返回的格式对不对。</p>
+<p>它公开的数据，截至 2026 年 11 月 24 日：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>数字</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>检测过的 Claude 中转站</td>
+<td>5,630 家</td>
+</tr>
+<tr>
+<td>Claude 协议的检测报告</td>
+<td>85,583 份</td>
+</tr>
+<tr>
+<td>进入 Claude 榜排名的站</td>
+<td>3,354 家</td>
+</tr>
+<tr>
+<td>思维签名检测没通过的比例</td>
+<td>13%</td>
+</tr>
+<tr>
+<td>工具调用检测的通过率</td>
+<td>95%</td>
+</tr>
+</tbody>
+</table></div>
+<p>换句话说，每 8 次思维签名检测里大约有 1 次没过。</p>
+<h2>多少家两项都稳</h2>
+<p><strong>Veridrop</strong> 给 Claude Code 单独列了一份名单，入选条件是四条：</p>
+<ul>
+<li>在 Claude 榜进入排名；</li>
+<li>思维签名通过率在 80% 以上，至少测过 3 次；</li>
+<li>工具调用通过率在 80% 以上，至少测过 2 次；</li>
+<li>最近 30 天内测过。</li>
+</ul>
+<p>截至 11 月 24 日，名单列满了 30 家。名单每天更新，当天的见 <a href="https://veridrop.app/guide/claude-code-zhongzhuanzhan">Claude Code 中转站名单</a>。</p>
+<p>名单之外的站不代表不能用，可能只是检测次数不够。</p>
+<h2>检测没有覆盖的</h2>
+<p>这一点要说清楚。<strong>Veridrop</strong> 测了模型真假、一次强制的工具调用、用量字段、流式和非流式输出是否一致、响应格式。下面这些它没有测：</p>
+<ul>
+<li>Claude Code 的长会话和子代理；</li>
+<li>提示缓存有没有生效；</li>
+<li>模型长时间思考时，连接会不会被中转站断掉；</li>
+<li>长上下文。这一项只在提交检测时勾选才跑。</li>
+</ul>
+<p>所以检测通过说明的是“这家站的 Claude 看起来是真的，工具调用也稳定”，不等于“Claude Code 的每项功能都正常”。</p>
+<p>这些没覆盖的部分，和中转站的转发方式有关。按 Claude Code 官方给网关的兼容性说明，中转站需要做到：</p>
+<ul>
+<li>原样转发 <code>anthropic-beta</code>、<code>anthropic-version</code> 两个请求头；</li>
+<li>流式响应边收边转，并保留其中的 ping 事件；</li>
+<li>原样转发缓存标记和上游的错误信息。</li>
+</ul>
+<p>做不到的站，会出各种不好查的问题。充值之前可以直接问中转站这三条。</p>
+<h2>接完以后的四步</h2>
+<ol>
+<li>用同样的地址、key 和模型名，在 <a href="https://veridrop.app/claude"><strong>Veridrop</strong></a> 上测一次。</li>
+<li>在 Claude Code 里输入 <code>/status</code>，确认地址是你的中转站。</li>
+<li>让它做一个要读文件、改文件的小任务，看会不会中途报工具调用的错误。</li>
+<li>过一段时间再测一次。中转站可能会换后端。</li>
+</ol>
+
+  <div class="cta">
+    <strong>看当天的中转站排名，或者测一下自己的中转站</strong>
+    <ul class="links">
+      <li><a href="https://veridrop.app/claude">Claude 中转站检测</a></li>
+      <li><a href="https://veridrop.app/guide/claude-code-zhongzhuanzhan">Claude Code 中转站名单</a></li>
+      <li><a href="https://veridrop.app/leaderboard/claude">Claude 中转站排行榜</a></li>
+      <li><a href="https://veridrop.app/leaderboard">AI 中转站综合榜</a></li>
+    </ul>
+  </div>
+
+  <h2>接着看</h2>
+  <ul>
+    <li><a href="../zhongzhuanzhan-jiance/">中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的</a></li>
+    <li><a href="../ai-zhongzhuanzhan/">AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字</a></li>
+    <li><a href="../gpt-zhongzhuanzhan/">Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT</a></li>
+    <li><a href="../zhongzhuanzhan-jiance-yuanli/">中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假</a></li>
+    <li><a href="../../reports/2026-11/">2026 年 11 月 AI 中转站实测月报</a></li>
+  </ul>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    Veridrop 中转站检测 · 数据截至 2026-11-24 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a> · <a href="../../">全部指南和月报</a>
+  </div>
+</footer>
+</body>
+</html>

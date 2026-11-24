@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假 | Veridrop</title>
+<meta name="description" content="读 Veridrop 的源码看中转站检测的原理：思维签名怎么打分、usage 字段里哪些痕迹判为严重问题、token 用量和长上下文怎么查，以及它查不出什么。代码 AGPL-3.0 开源。">
+<link rel="canonical" href="https://canarybyte.github.io/veridrop/guides/zhongzhuanzhan-jiance-yuanli/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假">
+<meta property="og:description" content="读源码：思维签名怎么打分、哪些痕迹判为严重问题、token 用量和长上下文怎么查。">
+<meta property="og:url" content="https://canarybyte.github.io/veridrop/guides/zhongzhuanzhan-jiance-yuanli/">
+<meta property="og:site_name" content="Veridrop 中转站检测">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假","inLanguage":"zh-CN","datePublished":"2026-11-24","dateModified":"2026-11-24","author":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"publisher":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"mainEntityOfPage":"https://canarybyte.github.io/veridrop/guides/zhongzhuanzhan-jiance-yuanli/"}
+</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">Veridrop <span>中转站检测</span></a>
+    <nav aria-label="站点">
+      <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
+      <a href="https://veridrop.app/">在线检测</a>
+      <a href="https://github.com/canarybyte/veridrop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap prose">
+  <p class="kicker">指南 · 检测原理</p>
+  <h1>中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假</h1>
+  <p class="meta">数据截至 2026-11-24（北京时间） · 来源：<a href="https://veridrop.app/">Veridrop 中转站检测</a>的公开检测报告</p>
+
+<p>用中转站的人都想知道一件事：给我的到底是不是我买的那个模型。</p>
+<p><strong>Veridrop</strong> 是做这件事的一个开源工具，代码在 GitHub 上，仓库是 <a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a>，许可证是 AGPL-3.0。这篇不讲怎么用，只读它的源码，看它具体查了什么、怎么判。知道规则以后，报告上的每一项就都看得懂了。</p>
+<h2>整体结构：一组检测项，加权打分</h2>
+<p>检测引擎按协议分成三套：Claude、OpenAI、Gemini，各有自己的检测项。</p>
+<p>检测项分两类：</p>
+<ul>
+<li><strong>主动检测</strong>：自己发一条专门设计的请求，看响应。</li>
+<li><strong>被动检测</strong>：不发请求，只观察别的检测项收到的响应。好处是不多花请求，也就不多花你的余额。</li>
+</ul>
+<p>每个检测项给 0 到 100 分，各有权重，最后加权出总分。被跳过的检测项不计入权重。</p>
+<p>判定只有三档：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>总分</th>
+<th>判定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>70 分以上</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>50 到 70 分</td>
+<td>勉强</td>
+</tr>
+<tr>
+<td>50 分以下</td>
+<td>不通过</td>
+</tr>
+</tbody>
+</table></div>
+<p>还有一条封顶规则：只要出现过严重问题，总分再高，最高也只能判“勉强”。原因后面讲。</p>
+<h2>Claude：权重最高的是思维签名</h2>
+<p>Claude 协议一共 12 个检测项。权重排前面的几个：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>检测项</th>
+<th>权重</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>思维签名验证</td>
+<td>25</td>
+</tr>
+<tr>
+<td>行为签名验证</td>
+<td>15</td>
+</tr>
+<tr>
+<td>长上下文真实性（勾选才跑）</td>
+<td>15</td>
+</tr>
+<tr>
+<td>结构化输出</td>
+<td>12</td>
+</tr>
+<tr>
+<td>知识准确度、模型一致性、Token 用量</td>
+<td>各 10</td>
+</tr>
+</tbody>
+</table></div>
+<p>思维签名排第一。原理是：Claude 开启思考以后，响应里会带一个思考块，思考块里有一段签名，由 Anthropic 服务端生成。中转站把请求转给别的模型，就拿不到这段签名。</p>
+<p>它的打分规则写得很直白：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>响应的情况</th>
+<th>得分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>有思考块，签名够长</td>
+<td>100</td>
+</tr>
+<tr>
+<td>有思考块，有签名，但不到 50 个字符</td>
+<td>70</td>
+</tr>
+<tr>
+<td>有思考块，没有签名</td>
+<td>30</td>
+</tr>
+<tr>
+<td>没有思考块，思考参数被忽略了</td>
+<td>0</td>
+</tr>
+</tbody>
+</table></div>
+<p>源码里有两个细节值得一提：</p>
+<ul>
+<li><strong>题目是特意选的。</strong> 它让模型用辗转相除法求 2378 和 1547 的最大公约数。题目要有一定难度，模型才会真的去思考。数字也特意没用官方文档里的例子，免得中转站对着文档里的例题做特殊处理。</li>
+<li><strong>用非流式请求。</strong> 代码注释里写了实测结果：有的型号在流式下不返回思考块。</li>
+</ul>
+<p>这一项的边界也能从规则里读出来：它看的是签名在不在、长度像不像，没有做密码学上的校验。所以单次通过不是铁证，要结合其他项和多次检测看。</p>
+<p><strong>线上数据：</strong> 截至 2026 年 11 月 24 日，<strong>Veridrop</strong> 跑过的 Claude 思维签名检测里，13% 没通过。</p>
+<h2>OpenAI：没有签名，就查“转手的痕迹”</h2>
+<p>OpenAI 协议没有签名可查。它盯的是另一个东西：响应里的 <code>usage</code> 字段。</p>
+<p>官方 Chat Completions 的 <code>usage</code> 是 <code>prompt_tokens</code>、<code>completion_tokens</code>、<code>total_tokens</code>，加可选的明细。源码里列了三种直接判为“严重问题”的情况：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th><code>usage</code> 里出现</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>claude_</code> 开头的字段</td>
+<td>背后是 Claude 的接口</td>
+</tr>
+<tr>
+<td><code>gemini_</code> 开头的字段，或 <code>prompt_token_count</code>、<code>candidates_token_count</code>、<code>thoughts_token_count</code> 等</td>
+<td>背后是 Gemini 的接口</td>
+</tr>
+<tr>
+<td><code>usage_source</code>，值不是空也不是 <code>openai</code></td>
+<td>中转站自己写明了上游是别家</td>
+</tr>
+</tbody>
+</table></div>
+<p>这就是前面那条封顶规则的来由。一个把 GPT 请求转给别家模型的中转站，其他结构性的检查可能都能过，总分照样很高。所以只要出现严重问题，最高只判“勉强”。</p>
+<p><strong>线上数据：</strong> 截至 11 月 24 日，进入排名的 3,886 家 OpenAI 中转站里，14% 至少出现过一次严重问题。</p>
+<h2>token 用量：加 80 个 apple</h2>
+<p>查虚报用量的办法很朴素。发两条请求：</p>
+<ul>
+<li>第一条：<code>Reply with exactly: ok</code></li>
+<li>第二条：同样的话，后面加一段参考文本，内容是 apple 重复 80 次</li>
+</ul>
+<p>两条请求的 <code>prompt_tokens</code> 之差，应该在 80 上下。源码里 OpenAI 协议认可的范围是 45 到 130，放得很宽，目的是只抓明显对不上的，不误伤分词器的小差异。</p>
+<p>同一个检测项还查三件事：</p>
+<ul>
+<li><code>total_tokens</code> 是不是等于前两项相加；</li>
+<li>只回一个 ok，输出的 token 数是不是离谱地多；</li>
+<li>同一条请求，流式和非流式报的用量是否对得上。</li>
+</ul>
+<p>源码的说明里特意写了：这一项不是在审计账单，只是看数字前后是否一致、是否合理。</p>
+<p><strong>线上数据：</strong> 截至 11 月 24 日，OpenAI 用量计费的通过率是 60%，Claude 用量是 62%。</p>
+<h2>长上下文：大海捞针，分三档</h2>
+<p>查上下文有没有被截短，用的是“大海捞针”：在一段很长的输入里，10%、50%、90% 三个位置各放一句话，让模型把它们找出来。</p>
+<p>分三档，逐档加长，前一档没过就不再测下一档：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>档位</th>
+<th>能查出什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3.2 万 token</td>
+<td>传输层就被截断</td>
+</tr>
+<tr>
+<td>10 万 token</td>
+<td>中转站把长输入做了摘要或截短</td>
+</tr>
+<tr>
+<td>20 万 token</td>
+<td>被换成了上下文更小的模型</td>
+</tr>
+</tbody>
+</table></div>
+<p>三句话全找回来算通过，找回两句算轻微波动，一句或更少算截断。</p>
+<p>这一项花的 token 多，默认不跑，要提交检测时勾选。</p>
+<p><strong>线上数据：</strong> 截至 11 月 24 日，OpenAI 长上下文的通过率是 86%。</p>
+<h2>它查不出什么</h2>
+<p>从规则里能看出两个边界：</p>
+<ul>
+<li><strong>推理档位被压低。</strong> 模型是真的，只是想得少了，上面这些都能过。</li>
+<li><strong>单次结果。</strong> 网络超时、限流都会让一次检测失败；反过来一次通过也可能是碰巧。所以线上的排名只收有 2 份以上报告的站，13,856 家里是 6,136 家。</li>
+</ul>
+<h2>想自己跑</h2>
+<p>把仓库 <a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a> 克隆下来以后：</p>
+<pre><code class="language-bash">python3 -m venv venv
+./venv/bin/pip install -e &quot;.[dev,web]&quot;
+
+cp .env.example .env
+# 在 .env 里填 ANTHROPIC_BASE_URL、ANTHROPIC_API_KEY、ANTHROPIC_MODEL
+
+./venv/bin/relay-detector detect --model claude-haiku-4-5 --mode full -o out/test.json
+</code></pre>
+<p>检测有 quick、standard、full 三种模式，跑的检测项由少到多。</p>
+<p>不想装环境的话，打开<a href="https://veridrop.app/"><strong>Veridrop</strong> 中转站检测</a>，网页上填地址、key 和模型名就能测，一分钟左右出报告。</p>
+
+  <div class="cta">
+    <strong>看当天的中转站排名，或者测一下自己的中转站</strong>
+    <ul class="links">
+      <li><a href="https://github.com/canarybyte/veridrop">GitHub 仓库</a></li>
+      <li><a href="https://veridrop.app/">中转站检测</a></li>
+      <li><a href="https://veridrop.app/compare/relay-detectors">检测工具横评</a></li>
+      <li><a href="https://veridrop.app/leaderboard">AI 中转站综合榜</a></li>
+    </ul>
+  </div>
+
+  <h2>接着看</h2>
+  <ul>
+    <li><a href="../zhongzhuanzhan-jiance/">中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的</a></li>
+    <li><a href="../ai-zhongzhuanzhan/">AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字</a></li>
+    <li><a href="../claude-code-zhongzhuanzhan/">Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude</a></li>
+    <li><a href="../gpt-zhongzhuanzhan/">Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT</a></li>
+    <li><a href="../../reports/2026-11/">2026 年 11 月 AI 中转站实测月报</a></li>
+  </ul>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    Veridrop 中转站检测 · 数据截至 2026-11-24 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a> · <a href="../../">全部指南和月报</a>
+  </div>
+</footer>
+</body>
+</html>

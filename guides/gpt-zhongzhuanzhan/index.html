@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPT 中转站接 Codex 和 API：怎么确认拿到的是真 GPT | Veridrop</title>
+<meta name="description" content="GPT 中转站不能只看分数：98% 的站分数过线，14% 出现过严重问题。怎么从 usage 字段看出请求被转给别家模型，Codex 怎么接中转站。Veridrop 对 6,643 家 OpenAI 中转站的实测数字，截至 2026-11-24。">
+<link rel="canonical" href="https://canarybyte.github.io/veridrop/guides/gpt-zhongzhuanzhan/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="GPT 中转站接 Codex 和 API：怎么确认拿到的是真 GPT">
+<meta property="og:description" content="98% 的站分数过线，14% 出现过严重问题。怎么看 usage 字段，Codex 怎么接。">
+<meta property="og:url" content="https://canarybyte.github.io/veridrop/guides/gpt-zhongzhuanzhan/">
+<meta property="og:site_name" content="Veridrop 中转站检测">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT","inLanguage":"zh-CN","datePublished":"2026-11-24","dateModified":"2026-11-24","author":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"publisher":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"mainEntityOfPage":"https://canarybyte.github.io/veridrop/guides/gpt-zhongzhuanzhan/"}
+</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">Veridrop <span>中转站检测</span></a>
+    <nav aria-label="站点">
+      <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
+      <a href="https://veridrop.app/">在线检测</a>
+      <a href="https://github.com/canarybyte/veridrop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap prose">
+  <p class="kicker">指南 · GPT 中转站</p>
+  <h1>Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT</h1>
+  <p class="meta">数据截至 2026-11-24（北京时间） · 来源：<a href="https://veridrop.app/">Veridrop 中转站检测</a>的公开检测报告</p>
+
+<h2>先分清两类东西</h2>
+<p>这里说的 GPT 中转站，指提供 OpenAI 接口的 API 中转站：在自己的代码、Codex、Cherry Studio 这类客户端里填它的地址和 key，就能调用 GPT 模型。</p>
+<p>ChatGPT 网页版的共享账号、镜像站是另一类服务，不在这篇的范围里。</p>
+<h2>GPT 中转站的特别之处：分数都很高</h2>
+<p><a href="https://veridrop.app/openai"><strong>Veridrop</strong></a> 是一个<a href="https://github.com/canarybyte/veridrop">开源</a>的中转站检测工具。它公开的数据里，OpenAI 协议的情况是这样的（截至 2026 年 11 月 24 日）：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>项目</th>
+<th>数字</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>检测过的 OpenAI 中转站</td>
+<td>6,643 家</td>
+</tr>
+<tr>
+<td>OpenAI 协议的检测报告</td>
+<td>76,734 份</td>
+</tr>
+<tr>
+<td>进入排名的站</td>
+<td>3,886 家</td>
+</tr>
+<tr>
+<td>进入排名的站里，中位分 70 分以上的</td>
+<td>98%</td>
+</tr>
+<tr>
+<td>进入排名的站里，出现过严重问题的</td>
+<td>14%</td>
+</tr>
+</tbody>
+</table></div>
+<p>98% 的站分数过线，看上去几乎都没问题。但同时有 14% 出现过严重问题。两个数放在一起，说明一件事：<strong>GPT 中转站不能只看分数。</strong></p>
+<h2>什么是“严重问题”</h2>
+<p>有的中转站把 GPT 请求转给别家模型，再把响应改成 OpenAI 的格式。改格式的时候，用量字段里常会留下别家接口才有的东西。</p>
+<p>官方 Chat Completions 的 <code>usage</code> 里是 <code>prompt_tokens</code>、<code>completion_tokens</code>、<code>total_tokens</code>。出现下面这些，就说明请求被转过手：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th><code>usage</code> 里出现</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>claude_</code> 开头的字段</td>
+<td>背后是 Claude 的接口</td>
+</tr>
+<tr>
+<td><code>prompt_token_count</code>、<code>candidates_token_count</code> 这类字段</td>
+<td>背后是 Gemini 的接口</td>
+</tr>
+<tr>
+<td><code>usage_source</code>，值不是 <code>openai</code></td>
+<td>中转站自己写明了上游是别家</td>
+</tr>
+</tbody>
+</table></div>
+<p>这类站的其他检测项可能都能过，分数照样很高。所以 <strong>Veridrop</strong> 的规则是：出现严重问题的报告，最高只能判“勉强”，不管分数多少。</p>
+<p>想自己看一眼，发一条请求就行：</p>
+<pre><code class="language-bash">curl -s https://你的中转站地址/v1/chat/completions \
+  -H &quot;Authorization: Bearer $KEY&quot; \
+  -H &quot;content-type: application/json&quot; \
+  -d '{
+    &quot;model&quot;: &quot;你买的模型名&quot;,
+    &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Reply with exactly: ok&quot;}]
+  }'
+</code></pre>
+<p>另外提醒一句：响应里的 <code>model</code> 字段写着 gpt，证明不了什么。这个字段中转站可以随便填。</p>
+<h2>各项检测的通过率</h2>
+<p><strong>Veridrop</strong> 对 OpenAI 协议测 8 项。截至 11 月 24 日的通过率，括号里是 10 月 29 日：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>检测项</th>
+<th>查什么</th>
+<th>通过率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>基础请求</td>
+<td>能不能正常返回</td>
+<td>99%（98%）</td>
+</tr>
+<tr>
+<td>模型一致性</td>
+<td>是不是声称的那个模型</td>
+<td>97%（96%）</td>
+</tr>
+<tr>
+<td>函数调用</td>
+<td>能不能按格式调用工具</td>
+<td>91%（90%）</td>
+</tr>
+<tr>
+<td>结构化输出</td>
+<td>严格 JSON 格式能不能遵守</td>
+<td>98%（98%）</td>
+</tr>
+<tr>
+<td>协议字段</td>
+<td>响应结构和官方是否一致</td>
+<td>96%（96%）</td>
+</tr>
+<tr>
+<td>完整性</td>
+<td>输出有没有被截断或改写</td>
+<td>96%（95%）</td>
+</tr>
+<tr>
+<td>用量计费</td>
+<td>token 数是否对得上</td>
+<td>60%（60%）</td>
+</tr>
+<tr>
+<td>长上下文</td>
+<td>长输入中间的信息能不能找回来</td>
+<td>86%（85%）</td>
+</tr>
+</tbody>
+</table></div>
+<p>最低的两项是用量计费和长上下文。前一项关系到钱有没有多扣，后一项关系到长输入有没有被截短。</p>
+<h2>接 Codex，多看两项</h2>
+<p>Codex 干活时会频繁调用工具，并且要求严格的输出格式。所以给 Codex 选中转站，除了模型要是真的，还要看函数调用和结构化输出。这两项不稳，任务会跑到一半报格式错误。</p>
+<p><strong>Veridrop</strong> 给 Codex 单独列了一份名单，入选条件：</p>
+<ul>
+<li>在 OpenAI 榜进入排名；</li>
+<li>函数调用和结构化输出的通过率都在 80% 以上，每项至少测过 2 次；</li>
+<li>最近 30 天内测过。</li>
+</ul>
+<p>截至 11 月 24 日，名单列满了 30 家。名单每天更新，当天的见 <a href="https://veridrop.app/guide/codex-zhongzhuanzhan">Codex 中转站名单</a>。</p>
+<h2>Codex 怎么接</h2>
+<p>按 Codex 的官方说明，接中转站要在 <code>~/.codex/config.toml</code> 里加一个自定义供应商：</p>
+<pre><code class="language-toml">model = &quot;你买的模型名&quot;
+model_provider = &quot;relay&quot;
+
+[model_providers.relay]
+name = &quot;relay&quot;
+base_url = &quot;https://你的中转站地址/v1&quot;
+env_key = &quot;RELAY_API_KEY&quot;
+wire_api = &quot;responses&quot;
+</code></pre>
+<p><code>env_key</code> 写的是环境变量的名字，key 本身放在这个环境变量里。</p>
+<p>注意 <code>wire_api</code>：Codex 的自定义供应商走的是 Responses 接口。只支持 Chat Completions 的中转站接不上，或者功能不全。充值之前先问清楚这一条。</p>
+<h2>检测没有覆盖的</h2>
+<p>这一点要说清楚：<strong>Veridrop</strong> 测的是 OpenAI 协议的真实性和上面这几项能力，没有专门测 Responses 接口是否完整可用。所以检测通过、进了名单，说明的是“这家站的 GPT 看起来是真的，工具调用也稳定”，不等于“一定能接上 Codex”。</p>
+<h2>接完以后的三步</h2>
+<ol>
+<li>用同样的地址、key 和模型名，在 <a href="https://veridrop.app/openai"><strong>Veridrop</strong></a> 上测一次，一分钟左右出结果，免费。</li>
+<li>在 Codex 里跑一个需要读文件、调工具的小任务，看会不会中途报格式错误。</li>
+<li>过一段时间再测一次。中转站可能会换后端。</li>
+</ol>
+
+  <div class="cta">
+    <strong>看当天的中转站排名，或者测一下自己的中转站</strong>
+    <ul class="links">
+      <li><a href="https://veridrop.app/openai">GPT 中转站检测</a></li>
+      <li><a href="https://veridrop.app/leaderboard/openai">GPT 中转站排行榜</a></li>
+      <li><a href="https://veridrop.app/guide/gpt-zhongzhuanzhan">GPT 中转站怎么选</a></li>
+      <li><a href="https://veridrop.app/guide/codex-zhongzhuanzhan">Codex 中转站名单</a></li>
+      <li><a href="https://veridrop.app/leaderboard">AI 中转站综合榜</a></li>
+    </ul>
+  </div>
+
+  <h2>接着看</h2>
+  <ul>
+    <li><a href="../zhongzhuanzhan-jiance/">中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的</a></li>
+    <li><a href="../ai-zhongzhuanzhan/">AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字</a></li>
+    <li><a href="../claude-code-zhongzhuanzhan/">Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude</a></li>
+    <li><a href="../zhongzhuanzhan-jiance-yuanli/">中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假</a></li>
+    <li><a href="../../reports/2026-11/">2026 年 11 月 AI 中转站实测月报</a></li>
+  </ul>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    Veridrop 中转站检测 · 数据截至 2026-11-24 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a> · <a href="../../">全部指南和月报</a>
+  </div>
+</footer>
+</body>
+</html>

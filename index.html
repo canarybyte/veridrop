@@ -3,19 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Veridrop 中转站检测月报：AI API 中转站实测数据，每月更新</title>
-<meta name="description" content="Veridrop 中转站检测的每月数据报告：收录的 API 中转站家数、公开检测报告份数，Claude、GPT、Gemini 三个协议的通过率和各项检测通过率。">
+<title>Veridrop 中转站检测：AI API 中转站实测指南和每月数据</title>
+<meta name="description" content="Veridrop 中转站检测的指南和月报：中转站检测能查出什么、AI 中转站怎么挑、Claude Code 和 Codex 怎么接中转站，以及 Claude、GPT、Gemini 中转站每月的实测通过率。">
 <link rel="canonical" href="https://canarybyte.github.io/veridrop/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Veridrop 中转站检测月报">
-<meta property="og:description" content="AI API 中转站实测数据，每月更新。">
+<meta property="og:title" content="Veridrop 中转站检测：实测指南和每月数据">
+<meta property="og:description" content="AI API 中转站的实测指南和每月数据。">
 <meta property="og:url" content="https://canarybyte.github.io/veridrop/">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
 <header class="site-head">
   <div class="wrap">
-    <a class="brand" href="./">Veridrop <span>中转站检测月报</span></a>
+    <a class="brand" href="./">Veridrop <span>中转站检测</span></a>
     <nav aria-label="站点">
       <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
       <a href="https://veridrop.app/">在线检测</a>
@@ -26,13 +26,37 @@
 
 <main class="wrap">
   <p class="kicker">Veridrop · 开源的 AI API 中转站检测工具</p>
-  <h1>Veridrop 中转站检测月报</h1>
-  <p class="meta">AI API 中转站的实测数据，每月一份</p>
+  <h1>Veridrop 中转站检测：实测指南和每月数据</h1>
+  <p class="meta">AI API 中转站怎么挑、怎么验，和每个月的整体数字</p>
 
   <p>Veridrop 检测 Claude、GPT、Gemini 的 API 中转站：模型是不是真的、用量对不对得上、工具调用稳不稳。每份检测报告都是公开的，<a href="https://veridrop.app/leaderboard">中转站排行榜</a>按多份报告计算，每天更新。</p>
-  <p>月报把一个月的整体数字汇总在一起：收录了多少家、各协议的通过率、哪些问题最常见、和上个月比变了什么。</p>
+  <p>这里放两类内容：讲清楚一个问题的指南，和把一个月的整体数字汇总在一起的月报。数字都来自公开的检测报告。</p>
 
-  <h2>全部月报</h2>
+  <h2 id="guides">指南</h2>
+  <ul class="report-list">
+    <li>
+      <a href="guides/zhongzhuanzhan-jiance/">中转站检测能查出什么：用中转站最怕的六件事，Veridrop 是怎么查的</a>
+      <p>模型是不是真的、token 有没有多算、上下文有没有被截短：六类检查各自怎么查，查出来的数字是多少。</p>
+    </li>
+    <li>
+      <a href="guides/ai-zhongzhuanzhan/">AI 中转站是什么、怎么挑：五个常见的坑，每个都有实测数字</a>
+      <p>中转站是什么、和官方 API 差在哪，挑的时候按什么顺序看。五个坑各配一个实测占比。</p>
+    </li>
+    <li>
+      <a href="guides/claude-code-zhongzhuanzhan/">Claude Code 接中转站：两个环境变量，和接完以后怎么确认是真 Claude</a>
+      <p>配置只要两个环境变量。接完以后看两项：思维签名和工具调用。</p>
+    </li>
+    <li>
+      <a href="guides/gpt-zhongzhuanzhan/">Codex 和 GPT API 接中转站，怎么确认拿到的是真 GPT</a>
+      <p>98% 的站分数过线，14% 出现过严重问题。怎么看 usage 字段，Codex 怎么接。</p>
+    </li>
+    <li>
+      <a href="guides/zhongzhuanzhan-jiance-yuanli/">中转站检测原理：拆解开源的 Veridrop，看它怎么判断模型真假</a>
+      <p>读源码：思维签名怎么打分、哪些痕迹判为严重问题、token 用量和长上下文怎么查。</p>
+    </li>
+  </ul>
+
+  <h2 id="reports">全部月报</h2>
   <ul class="report-list">
     <li>
       <a href="reports/2026-11/">2026 年 11 月 AI 中转站实测月报</a>
@@ -54,7 +78,7 @@
 
 <footer class="site-foot">
   <div class="wrap">
-    Veridrop 中转站检测月报 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a>
+    Veridrop 中转站检测 · 检测免费，不用注册 · 代码开源：<a href="https://github.com/canarybyte/veridrop">canarybyte/veridrop</a>
   </div>
 </footer>
 </body>
