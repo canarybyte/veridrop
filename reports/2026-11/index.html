@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2026 年 11 月 AI 中转站实测月报：13,856 家 API 中转站检测数据 | Veridrop</title>
+<meta name="description" content="Veridrop 中转站检测 2026 年 11 月月报：13,856 家 API 中转站、179,839 份公开检测报告。Claude、GPT、Gemini 三个协议的通过率、严重问题占比、各项检测通过率和本月变化，数据截至 2026-11-24。">
+<link rel="canonical" href="https://canarybyte.github.io/veridrop/reports/2026-11/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="2026 年 11 月 AI 中转站实测月报：13,856 家 API 中转站检测数据">
+<meta property="og:description" content="Claude、GPT、Gemini 三个协议的通过率、严重问题占比、各项检测通过率和本月变化，数据截至 2026-11-24。">
+<meta property="og:url" content="https://canarybyte.github.io/veridrop/reports/2026-11/">
+<meta property="og:site_name" content="Veridrop 中转站检测月报">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"2026 年 11 月 AI 中转站实测月报：13,856 家 API 中转站检测数据","inLanguage":"zh-CN","datePublished":"2026-11-24","dateModified":"2026-11-24","author":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"publisher":{"@type":"Organization","name":"Veridrop","url":"https://veridrop.app/"},"mainEntityOfPage":"https://canarybyte.github.io/veridrop/reports/2026-11/"}
+</script>
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../../">Veridrop <span>中转站检测月报</span></a>
+    <nav aria-label="站点">
+      <a href="https://veridrop.app/leaderboard">中转站排行榜</a>
+      <a href="https://veridrop.app/">在线检测</a>
+      <a href="https://github.com/canarybyte/veridrop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="kicker">月报 · 2026 年 11 月</p>
+  <h1>2026 年 11 月 AI 中转站实测月报：13,856 家 API 中转站的检测数据</h1>
+  <p class="meta">数据截至 2026-11-24（北京时间），对比 2026-10-29 · 来源：<a href="https://veridrop.app/">Veridrop 中转站检测</a>的公开检测报告</p>
+
+  <ul class="stats">
+    <li><b>13,856</b><span>收录的中转站（家）</span></li>
+    <li><b>179,839</b><span>公开检测报告（份）</span></li>
+    <li><b>6,136</b><span>进入排名的站（家）</span></li>
+  </ul>
+
+  <p>Veridrop 是一个开源的 AI API 中转站检测工具：填中转站地址、key 和模型名，它跑一组检查，看给你的是不是你买的那个模型，然后出一份公开报告。<a href="https://veridrop.app/leaderboard">中转站排行榜</a>按每个站的多份报告计算。这份月报汇总 11 月的整体数字。</p>
+
+  <div class="key">
+    <ol>
+      <li><strong>Claude 中转站里问题最多。</strong>进入排名的站里，中位分 70 分以上的只有 80%；OpenAI 是 98%，Gemini 是 91%。</li>
+      <li><strong>OpenAI 中转站分数高，但每 7 家里有 1 家出现过严重问题。</strong>严重问题指响应结构和官方不符，或者用量字段里带着别家模型的痕迹。这个比例是 14%，和 10 月 29 日一样。</li>
+      <li><strong>用量对不上最常见。</strong>OpenAI 用量计费检测的通过率是 60%，Claude 是 62%，是常规检测项里最低的。</li>
+    </ol>
+  </div>
+
+  <h2 id="total">一、总量</h2>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th></th><th class="num">11 月 24 日</th><th class="num">10 月 29 日</th><th class="num">变化</th></tr></thead>
+      <tbody>
+        <tr><th>收录的中转站</th><td class="num">13,856 家</td><td class="num">12,511 家</td><td class="num">多 1,345 家</td></tr>
+        <tr><th>公开检测报告</th><td class="num">179,839 份</td><td class="num">141,337 份</td><td class="num">多 38,502 份</td></tr>
+        <tr><th>进入排名的站</th><td class="num">6,136 家</td><td class="num">没记</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>只有 1 份报告的站不进排名。网络超时、限流都会让单次检测失败，一份报告下不了结论。所以 13,856 家里进入排名的不到一半。</p>
+
+  <h2 id="protocols">二、Claude、GPT、Gemini 三个协议</h2>
+  <h3>收录家数和报告份数</h3>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>协议</th><th class="num">收录家数</th><th class="num">比 10 月 29 日</th><th class="num">报告份数</th><th class="num">比 10 月 29 日</th></tr></thead>
+      <tbody>
+        <tr><th><a href="https://veridrop.app/leaderboard/claude">Claude 中转站</a></th><td class="num">5,630</td><td class="num">多 849</td><td class="num">85,583</td><td class="num">多 19,848</td></tr>
+        <tr><th><a href="https://veridrop.app/leaderboard/openai">GPT 中转站</a></th><td class="num">6,643</td><td class="num">多 571</td><td class="num">76,734</td><td class="num">多 14,601</td></tr>
+        <tr><th><a href="https://veridrop.app/leaderboard/gemini">Gemini 中转站</a></th><td class="num">973</td><td class="num">多 298</td><td class="num">17,517</td><td class="num">多 4,053</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Gemini 的家数不到一个月多了四成多，是三个协议里涨得最快的。</p>
+
+  <h3>进入排名的站里，各分数段的占比</h3>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>协议</th><th class="num">中位分 70 以上</th><th class="num">50 到 70</th><th class="num">50 以下</th><th class="num">出现过严重问题</th></tr></thead>
+      <tbody>
+        <tr><th>Claude</th><td class="num">80% <span class="was">（79%）</span></td><td class="num">16% <span class="was">（16%）</span></td><td class="num">4% <span class="was">（5%）</span></td><td class="num">不判这一项</td></tr>
+        <tr><th>OpenAI</th><td class="num">98% <span class="was">（97%）</span></td><td class="num">2% <span class="was">（2%）</span></td><td class="num">1% <span class="was">（2%）</span></td><td class="num">14% <span class="was">（14%）</span></td></tr>
+        <tr><th>Gemini</th><td class="num">91% <span class="was">（90%）</span></td><td class="num">8% <span class="was">（9%）</span></td><td class="num">1% <span class="was">（1%）</span></td><td class="num">1% <span class="was">（1%）</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul class="note">
+    <li>括号里是 10 月 29 日的数。</li>
+    <li>70 分以上算“通过”，50 到 70 算“勉强”，50 以下算“不通过”。</li>
+    <li>四舍五入以后，一行加起来可能是 99% 或 101%。</li>
+    <li>Claude 协议不判“严重问题”，它看思维签名，见下一节。</li>
+  </ul>
+
+  <h2 id="detectors">三、各项检测的通过率</h2>
+  <p>通过率只算实际跑过的检测次数，跳过的不算。</p>
+
+  <h3>Claude 协议</h3>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>检测项</th><th>查什么</th><th class="num">11 月 24 日</th><th class="num">10 月 29 日</th></tr></thead>
+      <tbody>
+        <tr><th>思维签名</th><td class="wrap-cell">背后是不是 Claude</td><td class="num">87%</td><td class="num">85%</td></tr>
+        <tr><th>协议字段</th><td class="wrap-cell">响应结构和官方是否一致</td><td class="num">100%</td><td class="num">100%</td></tr>
+        <tr><th>模型一致性</th><td class="wrap-cell">是不是声称的那个模型</td><td class="num">95%</td><td class="num">95%</td></tr>
+        <tr><th>知识截止</th><td class="wrap-cell">知识的截止时间和声称的模型是否对得上</td><td class="num">95%</td><td class="num">95%</td></tr>
+        <tr><th>行为特征</th><td class="wrap-cell">拒答方式、排版习惯是否像 Claude</td><td class="num">94%</td><td class="num">94%</td></tr>
+        <tr><th>工具调用</th><td class="wrap-cell">能不能按格式调用工具</td><td class="num">95%</td><td class="num">没记</td></tr>
+        <tr><th>用量</th><td class="wrap-cell">token 数是否对得上</td><td class="num low">62%</td><td class="num">没记</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>OpenAI 协议</h3>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>检测项</th><th>查什么</th><th class="num">11 月 24 日</th><th class="num">10 月 29 日</th></tr></thead>
+      <tbody>
+        <tr><th>基础请求</th><td class="wrap-cell">能不能正常返回</td><td class="num">99%</td><td class="num">98%</td></tr>
+        <tr><th>模型一致性</th><td class="wrap-cell">是不是声称的那个模型</td><td class="num">97%</td><td class="num">96%</td></tr>
+        <tr><th>函数调用</th><td class="wrap-cell">能不能按格式调用工具</td><td class="num">91%</td><td class="num">90%</td></tr>
+        <tr><th>结构化输出</th><td class="wrap-cell">严格 JSON 格式能不能遵守</td><td class="num">98%</td><td class="num">98%</td></tr>
+        <tr><th>协议字段</th><td class="wrap-cell">响应结构和官方是否一致</td><td class="num">96%</td><td class="num">96%</td></tr>
+        <tr><th>完整性</th><td class="wrap-cell">输出有没有被截断或改写</td><td class="num">96%</td><td class="num">95%</td></tr>
+        <tr><th>用量计费</th><td class="wrap-cell">token 数是否对得上</td><td class="num low">60%</td><td class="num">60%</td></tr>
+        <tr><th>长上下文</th><td class="wrap-cell">长输入中间的信息能不能找回来</td><td class="num">86%</td><td class="num">85%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>怎么读这两张表</h3>
+  <ul>
+    <li><strong>思维签名没通过的从 15% 降到 13%。</strong>签名由 Anthropic 服务端生成，把请求转给别家模型的中转站拿不到它。这是判断“是不是真 Claude”最直接的一项。</li>
+    <li><strong>用量是短板。</strong>这一项查的是 token 数前后是否一致、是否合理。没通过不等于一定多扣了钱，但值得自己核一遍账单。</li>
+    <li><strong>函数调用 91%、Claude 工具调用 95%。</strong>接 Codex、Claude Code 这类编程工具的人要看这两项，工具调用不稳，任务会中途报错。</li>
+    <li>Claude 的长上下文没有列进来。这一项只在提交检测时勾选才跑，样本少，不适合拿来下结论。</li>
+  </ul>
+  <p>每一类问题的说明和判定方法，见 <a href="https://veridrop.app/guide/zhongzhuanzhan-chanshui-jiance">中转站掺水检测数据</a>。</p>
+
+  <h2 id="models">四、本月新适配的型号</h2>
+  <p>下面这些型号是 Veridrop 在 11 月新适配的：</p>
+  <ul>
+    <li>Claude：Fable 5.2</li>
+    <li>OpenAI：GPT-6.2 Astra、GPT-6.2 Sol</li>
+    <li>Gemini：Gemini 4 Carbon、Gemini 4 Neon、Gemini 4 Hydrogen</li>
+  </ul>
+  <p>买这些型号之前，先在 <a href="https://veridrop.app/claude">Claude 检测</a>、<a href="https://veridrop.app/openai">OpenAI 检测</a> 或 <a href="https://veridrop.app/gemini">Gemini 检测</a> 页面测一次。</p>
+
+  <h2 id="choose">五、挑中转站，按这个顺序看</h2>
+  <ol>
+    <li><strong>有没有 2 份以上、最近的报告。</strong>只有一份，或者一个月没人测过，参考价值有限。</li>
+    <li><strong>Claude 看思维签名的通过率。</strong>签名检测至少跑过 3 次、通过率低于 80% 的站，在 <a href="https://veridrop.app/leaderboard/claude">Claude 中转站排行榜</a>上会被扣分。</li>
+    <li><strong>OpenAI 和 Gemini 看有没有出现过严重问题。</strong>出现过一次就要小心。</li>
+    <li><strong>要接编程工具的，看工具调用。</strong></li>
+    <li><strong>用自己的 key 再测一次，先小额充值。</strong>排名只反映过去，中转站随时可能换后端。</li>
+  </ol>
+
+  <h2 id="method">六、数据怎么来的</h2>
+  <p>报告来自用户提交的检测和 Veridrop 的定期检测。每份报告对一个中转站跑一组检查，给 0 到 100 分。出现严重问题时，最高只能判“勉强”。排名按多份报告加权计算，报告越多，名次越稳。</p>
+  <p>这份月报不列具体的站名。名单每天都在变，当天的排名和每家站的历史报告以线上榜单为准。检测代码是开源的，每一项怎么判都能在 <a href="https://github.com/canarybyte/veridrop">GitHub 仓库</a>里看到。</p>
+
+  <div class="cta">
+    <strong>看当天的中转站排名，或者测一下自己的中转站</strong>
+    <ul class="links">
+      <li><a href="https://veridrop.app/leaderboard">AI 中转站综合榜</a></li>
+      <li><a href="https://veridrop.app/leaderboard/claude">Claude 中转站</a></li>
+      <li><a href="https://veridrop.app/leaderboard/openai">GPT 中转站</a></li>
+      <li><a href="https://veridrop.app/leaderboard/gemini">Gemini 中转站</a></li>
+      <li><a href="https://veridrop.app/">中转站检测</a></li>
+      <li><a href="https://veridrop.app/compare/relay-detectors">检测工具横评</a></li>
+    </ul>
+  </div>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    Veridrop 中转站检测月报 · 数据截至 2026-11-24 · 检测免费，不用注册 · <a href="../../">全部月报</a>
+  </div>
+</footer>
+</body>
+</html>
