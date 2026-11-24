@@ -16,7 +16,7 @@ the field, protocol, and cryptographic level — answering three questions:
 
 The hosted service at **[veridrop.app](https://veridrop.app)** is free,
 requires no signup, and never persists API keys. To date the community has
-run **44,000+ public detections across 6,500+ relay providers**, aggregated
+run **179,000+ public detections across 13,800+ relay providers** (as of 2026-11-24), aggregated
 into a Bayesian-weighted public leaderboard, with **~1,500–1,800 daily unique
 visitors**. Supported protocols: Anthropic Messages API, OpenAI Chat
 Completions, and the Gemini OpenAI-compatible API.
@@ -47,6 +47,14 @@ Completions, and the Gemini OpenAI-compatible API.
 - **主域 / 备用：[veridrop.org](https://veridrop.org)**（国内访问受限时，请使用上面的入口）
 
 域名如有变更，将优先更新此处。建议收藏[本 GitHub 项目页](https://github.com/canarybyte/veridrop)，以本区块公布的地址为准。
+
+## 每月检测数据
+
+最新：**[2026 年 11 月 AI 中转站实测月报](https://canarybyte.github.io/veridrop/reports/2026-11/)**（数据截至 2026-11-24）· [Markdown 版](reports/2026-11.md) · [全部月报](https://canarybyte.github.io/veridrop/)
+
+- 收录 13,856 家 API 中转站，累计 179,839 份公开检测报告，其中 6,136 家有 2 份以上报告、进入排名。
+- 进入排名的站里，中位分 70 分以上的：Claude 80%，OpenAI 98%，Gemini 91%。
+- Claude 思维签名检测里有 13% 没有通过；进入排名的 OpenAI 中转站有 14% 至少出现过一次严重问题。
 
 ---
 
